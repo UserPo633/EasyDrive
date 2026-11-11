@@ -26,12 +26,17 @@ import kotlin.coroutines.resume
  */
 class VehicleGateway(context: Context) {
 
-    private val vehicle = Vehicle(context.applicationContext)
+    // SDK 객체를 만들지 못해도(Pleos 서비스가 없는 환경 등) 앱이 종료되지 않도록 모든 항목을 '확인 불가'로 표시한다.
+    private val vehicleOrNull: Vehicle? = runCatching { Vehicle(context.applicationContext) }
+        .onFailure { Log.w(TAG, "Vehicle() creation failed", it) }
+        .getOrNull()
+    private val vehicle: Vehicle get() = vehicleOrNull ?: error("Vehicle SDK를 사용할 수 없음")
     private var initialized = false
 
     fun initialize() {
         if (initialized) return
-        runCatching { vehicle.initialize() }
+        val v = vehicleOrNull ?: return
+        runCatching { v.initialize() }
             .onSuccess { initialized = true }
             .onFailure { Log.w(TAG, "Vehicle.initialize failed", it) }
     }

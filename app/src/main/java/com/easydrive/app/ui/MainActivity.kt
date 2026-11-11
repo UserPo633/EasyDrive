@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.heightIn
+import com.easydrive.app.domain.HandoverRecord
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
@@ -75,7 +78,7 @@ private val Stop = Color(0xFFFF5A5F)
 private val Muted = Color(0xFF8A97A6)
 private val TextMain = Color(0xFFF2F5F8)
 
-private enum class Tab(val label: String, val icon: ImageVector) {
+internal enum class Tab(val label: String, val icon: ImageVector) {
     CHECKIN("체크인", Icons.Filled.List),
     PRACTICE("손으로 익히기", Icons.Filled.Build),
     WARNINGS("경고등", Icons.Filled.Warning),
@@ -86,11 +89,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val controller = (application as EasyDriveApp).controller
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = CardBg)) {
-                EasyDriveScreen(controller)
-            }
-        }
+        setContent { EasyDriveRoot(controller) }
     }
 
     override fun onResume() {
@@ -100,11 +99,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** 테마까지 포함한 앱 최상위 화면(화면 캡처 테스트에서도 같은 코드를 쓴다). */
 @Composable
-private fun EasyDriveScreen(c: AppController) {
+internal fun EasyDriveRoot(c: AppController, startTab: Tab = Tab.CHECKIN) {
+    MaterialTheme(colorScheme = darkColorScheme(primary = Accent, onPrimary = Color(0xFF06101F), background = Bg, surface = CardBg)) {
+        EasyDriveScreen(c, startTab)
+    }
+}
+
+@Composable
+private fun EasyDriveScreen(c: AppController, startTab: Tab) {
     val restriction by c.restriction.state.collectAsStateWithLifecycle()
     val events by c.events.collectAsStateWithLifecycle()
-    var tab by remember { mutableStateOf(Tab.CHECKIN) }
+    var tab by remember { mutableStateOf(startTab) }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
         if (restriction != Restriction.PARKED_OK) {
@@ -151,7 +158,7 @@ private fun LockedScreen(r: Restriction) {
 @Composable
 private fun NavRail(current: Tab, pendingCount: Int, onSelect: (Tab) -> Unit) {
     Column(
-        Modifier.fillMaxHeight().width(200.dp).background(Color(0xFF121A22)).padding(vertical = 24.dp, horizontal = 12.dp),
+        Modifier.fillMaxHeight().width(232.dp).background(Color(0xFF121A22)).padding(vertical = 24.dp, horizontal = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("EasyDrive", color = TextMain, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 12.dp, bottom = 16.dp))
@@ -160,12 +167,12 @@ private fun NavRail(current: Tab, pendingCount: Int, onSelect: (Tab) -> Unit) {
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                     .background(if (selected) Accent.copy(alpha = 0.18f) else Color.Transparent)
-                    .clickable { onSelect(t) }.padding(horizontal = 12.dp, vertical = 16.dp),
+                    .clickable { onSelect(t) }.heightIn(min = 76.dp).padding(horizontal = 12.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(t.icon, null, tint = if (selected) Accent else Muted, modifier = Modifier.size(28.dp))
                 Spacer(Modifier.width(12.dp))
-                Text(t.label, color = if (selected) TextMain else Muted, fontSize = 20.sp)
+                Text(t.label, color = if (selected) TextMain else Muted, fontSize = 20.sp, maxLines = 1, softWrap = false)
                 if (t == Tab.WARNINGS && pendingCount > 0) {
                     Spacer(Modifier.width(8.dp))
                     Box(Modifier.clip(RoundedCornerShape(10.dp)).background(Warn).padding(horizontal = 8.dp, vertical = 2.dp)) {
@@ -215,7 +222,7 @@ private fun CheckinTab(c: AppController) {
             Column(Modifier.weight(1f)) {
                 Title("인수 체크인 리포트", if (r.loading) "차량에서 읽는 중…" else "차량에서 읽은 시각 ${time(r.readAtMillis)}")
             }
-            OutlinedButton(onClick = { c.refreshReport() }) {
+            OutlinedButton(onClick = { c.refreshReport() }, modifier = Modifier.heightIn(min = 64.dp)) {
                 Icon(Icons.Filled.Refresh, null); Spacer(Modifier.width(6.dp)); Text("다시 읽기", fontSize = 18.sp)
             }
         }
@@ -232,8 +239,8 @@ private fun CheckinTab(c: AppController) {
         }
         Spacer(Modifier.height(22.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { c.saveCheckin() }, enabled = !r.loading, colors = ButtonDefaults.buttonColors(containerColor = Accent)) {
-                Text(if (saved == null) "인수 기록 저장" else "인수 기록 다시 저장", fontSize = 20.sp, modifier = Modifier.padding(8.dp))
+            Button(onClick = { c.saveCheckin() }, enabled = !r.loading, modifier = Modifier.heightIn(min = 64.dp), colors = ButtonDefaults.buttonColors(containerColor = Accent)) {
+                Text(if (saved == null) "인수 기록 저장" else "인수 기록 다시 저장", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp))
             }
             Spacer(Modifier.width(16.dp))
             Text(
@@ -340,7 +347,7 @@ private fun WarningsTab(c: AppController) {
             Text("주행 중 켜진 경고등", color = Warn, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             pending.forEach { EventCard(it); Spacer(Modifier.height(12.dp)) }
-            OutlinedButton(onClick = { c.acknowledgeEvents() }) { Text("확인했어요", fontSize = 18.sp) }
+            OutlinedButton(onClick = { c.acknowledgeEvents() }, modifier = Modifier.heightIn(min = 64.dp)) { Text("확인했어요", fontSize = 18.sp) }
             Spacer(Modifier.height(22.dp))
         }
         Text("지금 켜져 있는 경고등", color = TextMain, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -421,10 +428,37 @@ private fun ReturnTab(c: AppController) {
                 else if (s.warnings.isNotEmpty()) Text("인수 시 이미 켜져 있던 경고등: ${s.warnings.joinToString()}", color = Muted, fontSize = 16.sp)
             }
         }
+        Spacer(Modifier.height(16.dp))
+        val recordText = remember(s, r.readAtMillis, events) {
+            HandoverRecord.text(
+                checkin = s,
+                nowOdometerKm = r.odometerKm.valueOrNullF(),
+                nowEnergyPercent = (r.energyPercent as? Read.Ok)?.value,
+                events = events,
+                nowMillis = if (r.readAtMillis > 0) r.readAtMillis else System.currentTimeMillis(),
+                eventName = { e ->
+                    val type = runCatching { ai.pleos.playground.vehicle.constant.telltale.TelltaleType.valueOf(e.typeName) }.getOrNull()
+                    TelltaleGuide.explain(type, e.colorId).name
+                },
+            )
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                QrView(recordText, Modifier.size(280.dp))
+                Spacer(Modifier.width(24.dp))
+                Column {
+                    Text("기록을 내 휴대폰으로", color = TextMain, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text("휴대폰 카메라로 QR을 찍으면 인수·반납 기록이 글자로 열려요. 메모나 메시지로 보관하세요.", color = TextMain.copy(alpha = 0.9f), fontSize = 19.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("서버로 보내지 않고, 차대번호·위치는 담지 않아요. 외관 상태는 직접 사진으로 남겨 주세요.", color = Muted, fontSize = 16.sp)
+                }
+            }
+        }
         Spacer(Modifier.height(18.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("인수 기록 ${time(s.savedAtMillis)} · 비교 기준 ${time(r.readAtMillis)}", color = Muted, fontSize = 17.sp, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = { c.finishRental() }) { Text("반납 완료 · 기록 지우기", fontSize = 18.sp) }
+            OutlinedButton(onClick = { c.finishRental() }, modifier = Modifier.heightIn(min = 64.dp)) { Text("반납 완료 · 기록 지우기", fontSize = 18.sp) }
         }
     }
 }
@@ -442,6 +476,30 @@ private fun CompareItem(modifier: Modifier, label: String, before: String?, now:
             Text("인수 ${before ?: "확인 불가"}  →  지금 ${now ?: "확인 불가"}", color = TextMain, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(delta ?: "비교할 수 없어요", color = if (delta != null) Accent else Muted, fontSize = 20.sp)
+        }
+    }
+}
+
+/** QR을 흰 바탕 위에 그린다(여백 포함). 생성에 실패하면 안내 문구만 보여 준다. */
+@Composable
+private fun QrView(text: String, modifier: Modifier) {
+    val matrix = remember(text) { runCatching { HandoverRecord.qr(text) }.getOrNull() }
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(Color.White).padding(14.dp), contentAlignment = Alignment.Center) {
+        if (matrix == null) {
+            Text("QR을 만들지 못했어요", color = Color.Black, fontSize = 16.sp)
+        } else {
+            Canvas(Modifier.fillMaxSize()) {
+                val n = matrix.size
+                val cell = kotlin.math.floor(size.minDimension / n)
+                val off = (size.minDimension - cell * n) / 2f
+                for (y in 0 until n) for (x in 0 until n) {
+                    if (matrix[y][x]) drawRect(
+                        Color.Black,
+                        topLeft = androidx.compose.ui.geometry.Offset(off + x * cell, off + y * cell),
+                        size = androidx.compose.ui.geometry.Size(cell, cell),
+                    )
+                }
+            }
         }
     }
 }

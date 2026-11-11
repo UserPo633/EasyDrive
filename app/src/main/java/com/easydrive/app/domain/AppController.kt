@@ -72,7 +72,13 @@ class AppController(
         restriction.start()
         scope.launch {
             delay(800) // Vehicle 서비스 바인딩 대기
-            refreshReport()
+            // SDK에는 연결 완료 알림이 없어, 첫 조회가 '확인 불가'면 잠시 후 다시 읽는다(최대 4회).
+            repeat(4) {
+                loadReport()
+                val r = _report.value
+                if (r.warnings !is Read.Unavailable && r.odometerKm !is Read.Unavailable) return@launch
+                delay(1500)
+            }
         }
         startTelltaleMonitor()
     }
@@ -86,28 +92,30 @@ class AppController(
     // ------------------------------------------------------------ 체크인 리포트
 
     fun refreshReport() {
-        scope.launch {
-            _report.update { it.copy(loading = true) }
-            val warnings = readActiveWarnings()
-            val ev = gateway.evStateOfChargePercent()
-            val (label, energy) = if (ev is Read.Ok) "배터리" to ev else "연료" to gateway.fuelPercent()
-            val range = when (val r = gateway.rangeRemainingMeters()) {
-                is Read.Ok -> Read.Ok(r.value / 1000f, r.readAtMillis)
-                is Read.Unavailable -> r
-                Read.Unsupported -> Read.Unsupported
-            }
-            _report.value = CheckinReport(
-                loading = false,
-                warnings = warnings,
-                energyLabel = label,
-                energyPercent = energy,
-                rangeKm = range,
-                odometerKm = gateway.odometerKm(),
-                openDoors = gateway.openDoors(),
-                openWindows = gateway.openWindows(),
-                readAtMillis = System.currentTimeMillis(),
-            )
+        scope.launch { loadReport() }
+    }
+
+    private suspend fun loadReport() {
+        _report.update { it.copy(loading = true) }
+        val warnings = readActiveWarnings()
+        val ev = gateway.evStateOfChargePercent()
+        val (label, energy) = if (ev is Read.Ok) "배터리" to ev else "연료" to gateway.fuelPercent()
+        val range = when (val r = gateway.rangeRemainingMeters()) {
+            is Read.Ok -> Read.Ok(r.value / 1000f, r.readAtMillis)
+            is Read.Unavailable -> r
+            Read.Unsupported -> Read.Unsupported
         }
+        _report.value = CheckinReport(
+            loading = false,
+            warnings = warnings,
+            energyLabel = label,
+            energyPercent = energy,
+            rangeKm = range,
+            odometerKm = gateway.odometerKm(),
+            openDoors = gateway.openDoors(),
+            openWindows = gateway.openWindows(),
+            readAtMillis = System.currentTimeMillis(),
+        )
     }
 
     fun saveCheckin() {
