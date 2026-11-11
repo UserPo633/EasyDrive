@@ -1,0 +1,19 @@
+name: unpack
+on:
+  push:
+    paths: ['upload.zip']
+permissions:
+  contents: write
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          unzip -o upload.zip
+          rm upload.zip
+          git config user.name easydrive
+          git config user.email easydrive@users.noreply.github.com
+          git add -A
+          git commit -m "Add QR handover record, automated tests, real UI renders; update APK" -m "Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01NfWFDeF7GisGJwFsnvkdTE"
+          git push
