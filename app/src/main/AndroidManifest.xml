@@ -3,8 +3,15 @@
 
     <uses-feature android:name="android.hardware.type.automotive" android:required="true" />
 
-    <!-- EasyDrive는 차량 상태를 읽기만 합니다. 제어(CONTROL_*) 권한은 선언하지 않습니다. -->
+    <!--
+      EasyDrive는 차량 상태를 읽기만 합니다.
+      제어(CONTROL_*) 권한과 비공개(PRIVATE_*) 권한은 선언하지 않습니다.
+      공개 읽기 권한은 공식 Vehicle SDK Sample App의 선언을 따랐습니다(설치 시 부여, 런타임 승인 창 없음).
+    -->
     <uses-permission android:name="pleos.car.permission.CAR_SAFETY" />
+    <uses-permission android:name="pleos.car.permission.CAR_MILEAGE" />
+    <uses-permission android:name="pleos.car.permission.CAR_POWERTRAIN" />
+    <uses-permission android:name="pleos.car.permission.READ_WINDSHIELD_WIPERS" />
     <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />
     <uses-permission android:name="pleos.car.permission.CAR_WINDOWS" />
     <uses-permission android:name="pleos.car.permission.CAR_CLIMATE" />
@@ -28,6 +35,8 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|uiMode">
+            <!-- 주행 규제가 걸리면 앱이 스스로 화면 전체를 잠급니다(DrivingRestriction + LockedScreen). -->
+            <meta-data android:name="distractionOptimized" android:value="true" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

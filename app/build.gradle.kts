@@ -36,6 +36,7 @@ android {
                 storePassword = keystoreProps.getProperty("storePassword")
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
+                enableV3Signing = true
             }
         }
     }
@@ -61,6 +62,7 @@ android {
             isReturnDefaultValues = true
             isIncludeAndroidResources = true
             all { t ->
+                t.maxHeapSize = "1200m"
                 // -Probolectric.repo=<Maven 미러 주소> 로 Robolectric 런타임을 받을 저장소를 바꿀 수 있습니다.
                 (project.findProperty("robolectric.repo") as String?)?.let { t.systemProperty("robolectric.dependency.repo.url", it) }
             }

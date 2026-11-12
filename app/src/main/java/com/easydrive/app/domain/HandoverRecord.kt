@@ -52,7 +52,7 @@ object HandoverRecord {
                 }
             ).append('\n')
         sb.append("지금 ").append(day.format(Date(nowMillis))).append(" / ").append(km(nowOdometerKm))
-        if (checkin.odometerKm != null && nowOdometerKm != null) {
+        if (checkin.odometerKm != null && nowOdometerKm != null && nowOdometerKm >= checkin.odometerKm) {
             sb.append("(+%,d)".format((nowOdometerKm - checkin.odometerKm).toInt()))
         }
         sb.append(" / ").append(energy).append(' ').append(pct(nowEnergyPercent)).append('\n')
@@ -60,7 +60,8 @@ object HandoverRecord {
         if (events.isEmpty()) sb.append("없음")
         else {
             sb.append(events.size).append("건: ")
-            sb.append(events.take(MAX_EVENTS).joinToString(", ") { e ->
+            // 최근 것부터 남긴다
+            sb.append(events.takeLast(MAX_EVENTS).joinToString(", ") { e ->
                 hm.format(Date(e.atMillis)) + " " + eventName(e) + if (e.whileRestricted) "(주행 중)" else ""
             })
             if (events.size > MAX_EVENTS) sb.append(" 외 ").append(events.size - MAX_EVENTS).append("건")

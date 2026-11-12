@@ -10,8 +10,12 @@ import com.easydrive.app.data.CheckinSnapshot
 import com.easydrive.app.data.CheckinStore
 import com.easydrive.app.data.WarningEvent
 import com.easydrive.app.vehicle.DrivingRestriction
+import com.easydrive.app.vehicle.LightGoal
 import com.easydrive.app.vehicle.Read
+import com.easydrive.app.vehicle.map
 import com.easydrive.app.vehicle.Restriction
+import com.easydrive.app.vehicle.BasicWarning
+import com.easydrive.app.vehicle.BasicWarnings
 import com.easydrive.app.vehicle.VehicleGateway
 import io.mockk.coEvery
 import io.mockk.every
@@ -54,6 +58,7 @@ class AppControllerTest {
         val restrictionState = MutableStateFlow(Restriction.PARKED_OK)
 
         var telltales: Read<Telltales> = Read.Ok(Telltales(emptyList()))
+        var basic: Read<BasicWarnings> = Read.Unsupported
         var ev: Read<Int> = Read.Unsupported
         var fuel: Read<Int> = Read.Ok(55)
         var range: Read<Float> = Read.Ok(320_000f)
@@ -77,14 +82,15 @@ class AppControllerTest {
             every { gateway.watchFrontDefroster(any(), any()) } just runs
             every { gateway.unwatchFrontDefroster() } just runs
             coEvery { gateway.telltales() } answers { telltales }
+            coEvery { gateway.basicWarnings() } answers { basic }
             coEvery { gateway.evStateOfChargePercent() } answers { ev }
             coEvery { gateway.fuelPercent() } answers { fuel }
             coEvery { gateway.rangeRemainingMeters() } answers { range }
             coEvery { gateway.odometerKm() } answers { odometer }
             coEvery { gateway.openDoors() } answers { doors }
             coEvery { gateway.openWindows() } answers { windows }
-            coEvery { gateway.lowBeamSupportsAuto() } answers { lightSupport }
-            coEvery { gateway.lowBeamSwitch() } answers { lightNow }
+            coEvery { gateway.lightGoal() } answers { when (val s = lightSupport) { is Read.Ok -> if (s.value) Read.Ok(LightGoal.AUTO) else Read.Unsupported; Read.Unsupported -> Read.Unsupported; is Read.Unavailable -> s } }
+            coEvery { gateway.lightGoalMet(any()) } answers { lightNow.map { it == LightSwitch.AUTOMATIC } }
             coEvery { gateway.frontWiperSupportsAuto() } answers { wiperSupport }
             coEvery { gateway.frontWiperSwitch() } answers { wiperNow }
             coEvery { gateway.frontDefrosterSupported() } answers { defrostSupport }
@@ -174,6 +180,139 @@ class AppControllerTest {
 
         assertTrue(c.report.value.warnings is Read.Ok)
         assertEquals(9_999f, (c.report.value.odometerKm as Read.Ok).value, 0.001f)
+    }
+
+    // ------------------------------------------------------------------ 공개 경고 상태(비공개 권한이 없을 때)
+
+    private val allBasic = BasicWarning.entries.toList()
+    private val noPermission = Read.Unavailable(VehicleGateway.NO_PERMISSION)
+
+    @Test
+    fun `경고등 목록 권한이 없으면 공개 경고 상태로 넘어가고 읽은 범위를 함께 알려 준다`() = runTest {
+        val f = Fake().apply {
+            telltales = noPermission
+            basic = Read.Ok(BasicWarnings(active = listOf(BasicWarning.WASHER_LOW), checked = allBasic))
+        }
+        val c = f.controller(this)
+        c.refreshReport(); advanceTimeBy(100)
+
+        val r = c.report.value
+        assertEquals(WarningScope.BASIC, r.warningScope)
+        assertEquals(listOf("워셔액 부족"), (r.warnings as Read.Ok).value.map { it.explain.name })
+        assertEquals(7, r.warningItems.size)
+    }
+
+    @Test
+    fun `공개 경고도 하나도 읽지 못하면 경고 없음이 아니라 지원 안 함 또는 확인 불가다`() = runTest {
+        val f = Fake().apply { telltales = noPermission; basic = Read.Unsupported }
+        val c = f.controller(this)
+        c.refreshReport(); advanceTimeBy(100)
+        assertEquals(Read.Unsupported, c.report.value.warnings)
+
+        f.basic = Read.Unavailable("응답 없음")
+        c.refreshReport(); advanceTimeBy(100)
+        assertTrue(c.report.value.warnings is Read.Unavailable)
+    }
+
+    @Test
+    fun `주행 중 새로 켜진 공개 경고도 기록하고 저장된 이름으로 풀이를 다시 찾는다`() = runTest {
+        val f = Fake().apply { telltales = noPermission; basic = Read.Ok(BasicWarnings(emptyList(), allBasic)) }
+        val c = f.controller(this)
+        c.start()
+        advanceTimeBy(3_000)
+        f.restrictionState.value = Restriction.LOCKED
+        f.basic = Read.Ok(BasicWarnings(listOf(BasicWarning.POWER_DOWN), allBasic))
+        advanceTimeBy(3_000)
+
+        val e = c.events.value.single()
+        assertTrue(e.whileRestricted)
+        assertEquals("출력 제한", TelltaleGuide.explainByName(e.typeName, e.colorId).name)
+    }
+
+    @Test
+    fun `일시적인 조회 실패로는 읽는 범위를 바꾸지 않아 가짜 이력이 생기지 않는다`() = runTest {
+        val f = Fake().apply {
+            telltales = Read.Ok(Telltales(listOf(tell(TelltaleType.TPMS))))
+            basic = Read.Ok(BasicWarnings(emptyList(), allBasic))
+        }
+        val c = f.controller(this)
+        c.start(); advanceTimeBy(3_000)
+        f.telltales = Read.Unavailable("응답 없음"); advanceTimeBy(6_000)
+        f.telltales = Read.Ok(Telltales(listOf(tell(TelltaleType.TPMS)))); advanceTimeBy(6_000)
+
+        assertTrue(c.events.value.isEmpty())
+    }
+
+    @Test
+    fun `계속 읽지 못하면 초록색 경고 없음을 남겨 두지 않는다`() = runTest {
+        val f = Fake()
+        val c = f.controller(this)
+        c.start(); advanceTimeBy(3_000)
+        assertTrue(c.report.value.warnings is Read.Ok)
+
+        f.telltales = Read.Unavailable("응답 없음")
+        advanceTimeBy(7_000)
+        assertTrue(c.report.value.warnings is Read.Unavailable)
+    }
+
+    @Test
+    fun `차량 값이 바뀌면 다시 읽기를 누르지 않아도 화면 값이 따라온다`() = runTest {
+        val f = Fake()
+        val c = f.controller(this)
+        c.start(); advanceTimeBy(3_000)
+        f.odometer = Read.Ok(12_400f)
+        advanceTimeBy(8_000)
+
+        assertEquals(12_400f, (c.report.value.odometerKm as Read.Ok).value, 0.001f)
+    }
+
+    @Test
+    fun `주차 브레이크 표시는 확인 필요로 세지 않고 새 이력으로도 남기지 않는다`() = runTest {
+        val f = Fake()
+        val c = f.controller(this)
+        c.start(); advanceTimeBy(3_000)
+        f.telltales = Read.Ok(Telltales(listOf(tell(TelltaleType.PARKING_BRAKE, color = 4))))
+        advanceTimeBy(3_000)
+
+        assertTrue(c.events.value.isEmpty())
+        c.saveCheckin()
+        assertTrue(f.savedCheckin!!.warnings.isEmpty())
+    }
+
+    @Test
+    fun `배터리 조회가 잠깐 실패해도 연료 차량으로 바뀌어 보이지 않는다`() = runTest {
+        val f = Fake().apply { ev = Read.Unavailable("응답 없음"); fuel = Read.Unsupported }
+        val c = f.controller(this)
+        c.refreshReport(); advanceTimeBy(100)
+
+        assertNull(c.report.value.energyLabel)
+        assertTrue(c.report.value.energyPercent is Read.Unavailable)
+    }
+
+    @Test
+    fun `첫 인수 기록을 저장하면 그 전에 쌓인 경고 기록은 비운다`() = runTest {
+        val f = Fake()
+        val c = f.controller(this)
+        c.start(); advanceTimeBy(3_000)
+        f.telltales = Read.Ok(Telltales(listOf(tell(TelltaleType.ENGINE))))
+        advanceTimeBy(3_000)
+        assertEquals(1, c.events.value.size)
+
+        c.saveCheckin()
+        assertTrue(c.events.value.isEmpty())
+    }
+
+    @Test
+    fun `완료한 실습 과제는 화면을 나갔다 와도 완료로 남는다`() = runTest {
+        val f = Fake()
+        val c = f.controller(this)
+        c.startPractice(); advanceTimeBy(500)
+        f.lightNow = Read.Ok(LightSwitch.AUTOMATIC); advanceTimeBy(1_500)
+        c.stopPractice()
+        c.startPractice(); advanceTimeBy(500)
+
+        assertEquals(TaskStatus.DONE, c.tasks.value.first { it.id == "light" }.status)
+        c.stopPractice()
     }
 
     // ------------------------------------------------------------------ 인수 기록·반납
@@ -310,6 +449,25 @@ class AppControllerTest {
     }
 
     @Test
+    fun `전조등에 AUTO 위치가 없는 차에서는 전조등 켜기 과제로 바꾸고 켜지면 완료한다`() = runTest {
+        // Pleos Connect Emulator v2.1.0은 전조등 스위치 선택지로 [OFF, ON]만 알려 준다.
+        val f = Fake()
+        var on = false
+        coEvery { f.gateway.lightGoal() } returns Read.Ok(LightGoal.ON_SWITCH)
+        coEvery { f.gateway.lightGoalMet(LightGoal.ON_SWITCH) } answers { Read.Ok(on) }
+        val c = f.controller(this)
+        c.startPractice()
+        advanceTimeBy(1_500)
+        assertEquals("전조등 켜기", c.tasks.value.byId("light").title)
+        assertEquals(TaskStatus.WAITING, c.tasks.value.byId("light").status)
+
+        on = true
+        advanceTimeBy(1_500)
+        assertEquals(TaskStatus.DONE, c.tasks.value.byId("light").status)
+        c.stopPractice()
+    }
+
+    @Test
     fun `이미 설정된 상태로 시작하면 완료가 아니라 이미 설정됨으로 표시한다`() = runTest {
         val f = Fake().apply { lightNow = Read.Ok(LightSwitch.AUTOMATIC) }
         val c = f.controller(this)
@@ -349,16 +507,16 @@ class AppControllerTest {
     }
 
     @Test
-    fun `실습을 다시 시작하면 과제가 처음 상태로 돌아간다`() = runTest {
+    fun `반납을 마치면 실습 과제도 처음 상태로 돌아간다`() = runTest {
         val f = Fake()
         val c = f.controller(this)
         c.startPractice(); advanceTimeBy(500)
         f.lightNow = Read.Ok(LightSwitch.AUTOMATIC); advanceTimeBy(1_500)
-        assertEquals(TaskStatus.DONE, c.tasks.value.byId("light").status)
+        assertEquals(TaskStatus.DONE, c.tasks.value.first { it.id == "light" }.status)
+        c.stopPractice()
 
-        f.lightNow = Read.Ok(LightSwitch.OFF)
-        c.startPractice(); advanceTimeBy(500)
-        assertEquals(TaskStatus.WAITING, c.tasks.value.byId("light").status)
+        c.finishRental()
+        assertTrue(c.tasks.value.none { it.status == TaskStatus.DONE })
     }
 
     // ------------------------------------------------------------------ 안전: 제어 API 미사용

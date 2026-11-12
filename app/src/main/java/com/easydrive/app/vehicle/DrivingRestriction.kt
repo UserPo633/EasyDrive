@@ -26,24 +26,42 @@ class DrivingRestriction(private val context: Context) {
 
     private val listener = CarUxRestrictionsManager.OnUxRestrictionsChangedListener { r -> apply(r) }
 
+    /**
+     * 차량 서비스(car_service)에 연결한다. 기다리지 않고 바로 돌아오며, 서비스가 준비되면 [attach]가 불린다.
+     * (예전 방식 Car.createCar(context)는 서비스가 아직 준비되지 않았으면 화면을 최대 5초 멈춘 뒤 포기해,
+     *  Pleos Connect 에뮬레이터 부팅 직후 실행했을 때 잠금이 풀리지 않는 문제가 있었다.)
+     * 서비스가 끊기면 '알 수 없음'(잠금)으로 돌아가고, 다시 준비되면 자동으로 다시 연결된다.
+     */
     fun start() {
-        if (manager != null) return
+        if (car != null) return
         try {
-            val c = Car.createCar(context.applicationContext)
-            val m = c?.getCarManager(Car.CAR_UX_RESTRICTION_SERVICE) as? CarUxRestrictionsManager
-            if (m == null) {
-                _state.value = Restriction.UNKNOWN
-                return
+            car = Car.createCar(context.applicationContext, null, Car.CAR_WAIT_TIMEOUT_DO_NOT_WAIT) { c, ready ->
+                if (ready) attach(c) else detach()
             }
-            car = c
-            manager = m
-            m.registerListener(listener)
-            apply(m.currentCarUxRestrictions)
         } catch (t: Throwable) {
-            // android.car 라이브러리가 없거나 서비스 연결 실패 → 상태를 알 수 없으므로 잠금 유지
+            // android.car 라이브러리가 없거나 연결 실패 → 상태를 알 수 없으므로 잠금 유지
             Log.w("EasyDrive", "UX restrictions unavailable", t)
             _state.value = Restriction.UNKNOWN
         }
+    }
+
+    private fun attach(c: Car) {
+        try {
+            val m = c.getCarManager(Car.CAR_UX_RESTRICTION_SERVICE) as? CarUxRestrictionsManager
+            manager = m
+            if (m == null) { _state.value = Restriction.UNKNOWN; return }
+            m.registerListener(listener)
+            apply(m.currentCarUxRestrictions)
+        } catch (t: Throwable) {
+            Log.w("EasyDrive", "UX restrictions unavailable", t)
+            _state.value = Restriction.UNKNOWN
+        }
+    }
+
+    private fun detach() {
+        manager = null
+        if (_state.value != Restriction.UNKNOWN) Log.i("EasyDrive", "driving restriction -> UNKNOWN (car service disconnected)")
+        _state.value = Restriction.UNKNOWN
     }
 
     fun stop() {
@@ -55,10 +73,12 @@ class DrivingRestriction(private val context: Context) {
     }
 
     private fun apply(r: CarUxRestrictions?) {
-        _state.value = when {
+        val next = when {
             r == null -> Restriction.UNKNOWN
             r.isRequiresDistractionOptimization -> Restriction.LOCKED
             else -> Restriction.PARKED_OK
         }
+        if (next != _state.value) Log.i("EasyDrive", "driving restriction -> $next (active=${r?.activeRestrictions})")
+        _state.value = next
     }
 }

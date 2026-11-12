@@ -16,3 +16,10 @@ sealed interface Read<out T> {
 }
 
 fun <T> Read<T>.valueOrNull(): T? = (this as? Read.Ok<T>)?.value
+
+/** 읽은 값만 바꾸고, '지원 안 함'·'확인 불가'는 그대로 전달한다. */
+inline fun <T, R> Read<T>.map(f: (T) -> R): Read<R> = when (this) {
+    is Read.Ok -> Read.Ok(f(value), readAtMillis)
+    Read.Unsupported -> Read.Unsupported
+    is Read.Unavailable -> this
+}

@@ -2,8 +2,12 @@ package com.easydrive.app.domain
 
 import ai.pleos.playground.vehicle.constant.telltale.TelltaleColor
 import ai.pleos.playground.vehicle.constant.telltale.TelltaleType
+import com.easydrive.app.vehicle.BasicWarning
 
-/** 경고등 한 개를 '무슨 뜻 / 지금 해도 되는 일 / 연락할 곳'으로 옮긴 안내 */
+/**
+ * 경고등 한 개를 '무슨 뜻 / 먼저 할 일'로 옮긴 안내.
+ * 운행해도 되는지는 앱이 판단하지 않는다. 계기판 메시지·설명서·운영사 안내가 우선한다.
+ */
 data class TelltaleExplain(
     val name: String,
     val meaning: String,
@@ -16,18 +20,19 @@ enum class Severity { STOP, CHECK, INFO }
 /**
  * 경고등 통역 사전.
  * 차량의 실제 경고 표시와 설명서를 대신하지 않으며, 운영사 안내와 차량 설명서가 우선한다는 전제를
- * 화면 하단에 항상 함께 보여 준다. 문구는 일반적인 안전 수칙 수준으로 보수적으로 작성했다.
+ * 경고등 화면 제목 바로 아래에 항상 함께 보여 준다. 문구는 일반적인 안전 수칙 수준으로 보수적으로 작성했다.
  */
 object TelltaleGuide {
 
     private val table: Map<TelltaleType, TelltaleExplain> = mapOf(
-        TelltaleType.PARKING_BRAKE to e("주차 브레이크", "주차 브레이크가 걸려 있거나 브레이크 계통 점검이 필요하다는 표시입니다.", "출발 전이라면 주차 브레이크를 풀어 보세요. 풀었는데도 계속 켜져 있으면 운행하지 말고 연락하세요.", Severity.STOP),
+        // 주차 중에는 정상적으로 켜져 있는 표시라 '확인 필요'로 세지 않는다(INFO).
+        TelltaleType.PARKING_BRAKE to e("주차 브레이크", "주차 브레이크가 걸려 있다는 표시입니다.", "출발할 때 주차 브레이크가 풀리는지 확인하세요. 풀어도 계속 켜져 있으면 운행하지 말고 연락하세요.", Severity.INFO),
         TelltaleType.ELECTRONIC_PARKING_BRAKE to e("전자식 주차 브레이크", "전자식 주차 브레이크 시스템에 이상이 있을 수 있다는 표시입니다.", "평지에 안전하게 정차한 상태에서 연락해 점검 여부를 확인하세요.", Severity.CHECK),
         TelltaleType.SEAT_BELT to e("안전벨트", "안전벨트를 매지 않은 좌석이 있습니다.", "모든 탑승자가 안전벨트를 맸는지 확인하세요.", Severity.CHECK),
         TelltaleType.DOOR_OPEN to e("도어 열림", "완전히 닫히지 않은 도어가 있습니다.", "정차한 상태에서 모든 도어를 다시 닫아 주세요.", Severity.CHECK),
         TelltaleType.TRUNK_OPEN to e("트렁크 열림", "트렁크(또는 테일게이트)가 완전히 닫히지 않았습니다.", "정차한 상태에서 트렁크를 다시 닫아 주세요.", Severity.CHECK),
-        TelltaleType.TPMS to e("타이어 공기압", "타이어 공기압이 낮거나 공기압 감지 장치 점검이 필요하다는 표시입니다.", "급제동과 고속 주행을 피하고, 가까운 정비소나 렌터카 고객센터에 연락하세요.", Severity.CHECK),
-        TelltaleType.ABS to e("ABS", "잠김 방지 브레이크(ABS)에 이상이 있을 수 있습니다. 일반 제동은 되지만 급제동 보조가 동작하지 않을 수 있습니다.", "차간 거리를 넉넉히 두고 서행한 뒤 점검을 요청하세요.", Severity.CHECK),
+        TelltaleType.TPMS to e("타이어 공기압", "타이어 공기압이 낮거나 공기압 감지 장치 점검이 필요하다는 표시입니다.", "안전한 곳에 정차해 타이어 상태를 눈으로 확인하고, 다시 출발하기 전에 운영사 고객센터나 정비소에 연락하세요.", Severity.CHECK),
+        TelltaleType.ABS to e("ABS", "잠김 방지 브레이크(ABS)에 이상이 있을 수 있습니다. 일반 제동은 되지만 급제동 보조가 동작하지 않을 수 있습니다.", "안전한 곳에 정차한 뒤 운영사 고객센터나 정비소에 점검을 요청하세요.", Severity.CHECK),
         TelltaleType.ESC to e("차체 자세 제어(ESC)", "미끄러운 길에서 ESC가 작동 중이면 깜박이고, 계속 켜져 있으면 점검이 필요할 수 있습니다.", "깜박인다면 속도를 줄이세요. 계속 켜져 있으면 점검을 요청하세요.", Severity.CHECK),
         TelltaleType.ESC_OFF to e("ESC 꺼짐", "차체 자세 제어(ESC) 기능이 꺼져 있습니다.", "특별한 이유가 없다면 ESC를 다시 켜는 방법을 운영사에 문의하세요.", Severity.CHECK),
         TelltaleType.MDPS to e("전동식 조향(MDPS)", "핸들 조향 보조 장치에 이상이 있을 수 있습니다. 핸들이 무거워질 수 있습니다.", "안전한 곳에 정차한 뒤 운행하지 말고 연락하세요.", Severity.STOP),
@@ -48,6 +53,42 @@ object TelltaleGuide {
     )
 
     private fun e(name: String, meaning: String, action: String, s: Severity) = TelltaleExplain(name, meaning, action, s)
+
+    /** 공개 권한으로 읽는 경고 상태 7종의 풀이 */
+    private val basicTable: Map<BasicWarning, TelltaleExplain> = mapOf(
+        BasicWarning.SEAT_BELT to e("안전벨트 미착용", "안전벨트를 매지 않은 좌석이 있다는 경고입니다.", "출발 전에 모든 탑승자가 안전벨트를 맸는지 확인하세요.", Severity.CHECK),
+        BasicWarning.WASHER_LOW to e("워셔액 부족", "앞유리를 닦는 워셔액이 부족하다는 경고입니다.", "인수 직후라면 직원에게 보충을 요청하세요. 주행 중이라면 다음 정차 때 보충하거나 운영사에 문의하세요.", Severity.CHECK),
+        BasicWarning.POWER_DOWN to e("출력 제한", "차량 보호를 위해 출력이 제한된 상태라는 경고입니다.", "안전한 곳에 정차하고, 다시 출발하기 전에 운영사 고객센터나 정비소에 연락하세요.", Severity.CHECK),
+        BasicWarning.ENGINE_OIL to e("엔진 오일 이상", "엔진 오일 양이 정상 범위를 벗어났다는 경고입니다.", "안전한 곳에 정차해 시동을 끄고 운영사 고객센터나 정비소에 연락하세요.", Severity.STOP),
+        BasicWarning.BRAKE_FLUID to e("브레이크액 이상", "브레이크액 양이 정상 범위를 벗어났다는 경고입니다. 제동 성능에 영향을 줄 수 있습니다.", "운행하지 말고 운영사 고객센터나 정비소에 연락하세요.", Severity.STOP),
+        BasicWarning.TRANSMISSION_OIL to e("변속기 오일 이상", "변속기 오일 양이 정상 범위를 벗어났다는 경고입니다.", "안전한 곳에 정차한 뒤 운영사 고객센터나 정비소에 연락하세요.", Severity.CHECK),
+        BasicWarning.AIRBAG_DEPLOYED to e("에어백 전개 이력", "에어백이 전개된 상태로 기록되어 있다는 표시입니다.", "운행하지 말고 운영사 고객센터에 연락하세요.", Severity.STOP),
+    )
+
+    const val BASIC_PREFIX = "BASIC_"
+
+    fun basic(w: BasicWarning): TelltaleExplain = basicTable.getValue(w)
+
+    /** 화면에 보여 줄 짧은 항목 이름(예: "읽는 경고 5종: 안전벨트·워셔액·…") */
+    fun basicShortName(w: BasicWarning): String = when (w) {
+        BasicWarning.SEAT_BELT -> "안전벨트"
+        BasicWarning.WASHER_LOW -> "워셔액"
+        BasicWarning.POWER_DOWN -> "출력 제한"
+        BasicWarning.ENGINE_OIL -> "엔진 오일"
+        BasicWarning.BRAKE_FLUID -> "브레이크액"
+        BasicWarning.TRANSMISSION_OIL -> "변속기 오일"
+        BasicWarning.AIRBAG_DEPLOYED -> "에어백 전개 이력"
+    }
+
+    /** 저장된 기록(이름 문자열)에서 풀이를 다시 찾는다. 공개 경고와 경고등 이름을 모두 처리한다. */
+    fun explainByName(typeName: String, colorId: Int): TelltaleExplain {
+        if (typeName.startsWith(BASIC_PREFIX)) {
+            val w = runCatching { BasicWarning.valueOf(typeName.removePrefix(BASIC_PREFIX)) }.getOrNull()
+            if (w != null) return basic(w)
+        }
+        val type = runCatching { TelltaleType.valueOf(typeName) }.getOrNull()
+        return explain(type, colorId)
+    }
 
     /**
      * 경고 대상 여부: 사전에 있는 경고등이거나, 차량이 빨강·노랑으로 표시한 경고등.

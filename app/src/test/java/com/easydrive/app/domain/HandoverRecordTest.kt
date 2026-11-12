@@ -47,12 +47,19 @@ class HandoverRecordTest {
 
     @Test
     fun `대여 중 경고등은 주행 중 여부와 함께 최대 3건까지 적고 나머지는 건수로 줄인다`() {
-        val events = (1..7).map { WarningEvent("TPMS", 3, t0 + it * 60_000, whileRestricted = it == 1) }
+        val events = (1..7).map { WarningEvent("TPMS", 3, t0 + it * 60_000, whileRestricted = it == 7) }
         val text = HandoverRecord.text(checkin(), 12_500f, 70, events, t0 + 3_600_000) { "타이어 공기압" }
         assertTrue(text.contains("대여 중 경고등 7건"))
         assertEquals(3, Regex("타이어 공기압").findAll(text).count())
         assertEquals(1, Regex("\\(주행 중\\)").findAll(text).count())
         assertTrue(text.contains("외 4건"))
+    }
+
+    @Test
+    fun `주행거리가 인수 때보다 작게 읽히면 음수 변화량을 적지 않는다`() {
+        val text = HandoverRecord.text(checkin(), 12_000f, 78, emptyList(), t0) { it.typeName }
+        assertFalse(text.contains("(+"))
+        assertFalse(text.contains("-"+"410"))
     }
 
     @Test
