@@ -76,6 +76,15 @@ class ScreenshotTest {
         coEvery { g.openDoors() } returns Read.Ok(emptyList())
         coEvery { g.openWindows() } returns Read.Ok(emptyList())
         coEvery { g.lightGoal() } returns Read.Ok(LightGoal.AUTO)
+        coEvery { g.chargePortSupported() } returns Read.Ok(true)
+        coEvery { g.doorLockSupported() } returns Read.Ok(true)
+        coEvery { g.doorLocked() } returns Read.Ok(false)
+        coEvery { g.gearParked() } returns Read.Ok(true)
+        coEvery { g.chargePortOpen() } returns Read.Ok(false)
+        coEvery { g.highBeamSupported() } returns Read.Ok(true)
+        coEvery { g.highBeamOn() } returns Read.Ok(false)
+        coEvery { g.rearDefrosterSupported() } returns Read.Ok(true)
+        coEvery { g.rearDefroster() } returns Read.Ok(false)
         coEvery { g.lightGoalMet(any()) } returns Read.Ok(lightAuto)
         coEvery { g.frontWiperSupportsAuto() } returns Read.Ok(true)
         coEvery { g.frontWiperSwitch() } returns Read.Ok(WiperSwitch.OFF)
@@ -121,6 +130,15 @@ class ScreenshotTest {
         coEvery { g.frontWiperSwitch() } returns Read.Ok(WiperSwitch.OFF)
         coEvery { g.frontDefrosterSupported() } returns Read.Ok(true)
         coEvery { g.frontDefroster() } returns Read.Ok(false)
+        coEvery { g.chargePortSupported() } returns Read.Ok(true)
+        coEvery { g.doorLockSupported() } returns Read.Ok(true)
+        coEvery { g.doorLocked() } returns Read.Ok(false)
+        coEvery { g.gearParked() } returns Read.Ok(true)
+        coEvery { g.chargePortOpen() } returns Read.Ok(false)
+        coEvery { g.highBeamSupported() } returns Read.Ok(true)
+        coEvery { g.highBeamOn() } returns Read.Ok(false)
+        coEvery { g.rearDefrosterSupported() } returns Read.Ok(true)
+        coEvery { g.rearDefroster() } returns Read.Ok(false)
         coEvery { g.telltales() } returns Read.Unavailable(VehicleGateway.NO_PERMISSION)
         coEvery { g.basicWarnings() } returns Read.Ok(BasicWarnings(emptyList(), listOf(BasicWarning.POWER_DOWN)))
         coEvery { g.evStateOfChargePercent() } returns Read.Ok(78)
@@ -180,6 +198,51 @@ class ScreenshotTest {
 
     @Test @Config(qualifiers = "w1682dp-h1210dp-mdpi")
     fun practicePleosPanel() = shoot("12_practice_pleos_panel_1682x1210", Tab.PRACTICE, controller())
+
+    // Pleos 패널 크기에서 6개 과제가 모두 확인된 상태(대기 → 사용자가 조작 → 완료)
+    @Test @Config(qualifiers = "w1682dp-h1210dp-mdpi")
+    fun practiceAllDonePleosPanel() {
+        val g = mockk<VehicleGateway>(relaxed = true)
+        var on = false
+        coEvery { g.lightGoal() } returns Read.Ok(LightGoal.AUTO)
+        coEvery { g.lightGoalMet(any()) } answers { Read.Ok(on) }
+        coEvery { g.frontWiperSupportsAuto() } returns Read.Ok(true)
+        coEvery { g.frontWiperSwitch() } answers { Read.Ok(if (on) WiperSwitch.AUTO else WiperSwitch.OFF) }
+        coEvery { g.frontDefrosterSupported() } returns Read.Ok(true)
+        coEvery { g.frontDefroster() } answers { Read.Ok(on) }
+        coEvery { g.chargePortSupported() } returns Read.Ok(true)
+        coEvery { g.doorLockSupported() } returns Read.Ok(true)
+        coEvery { g.doorLocked() } returns Read.Ok(false)
+        coEvery { g.gearParked() } returns Read.Ok(true)
+        coEvery { g.chargePortOpen() } answers { Read.Ok(on) }
+        coEvery { g.highBeamSupported() } returns Read.Ok(true)
+        coEvery { g.highBeamOn() } answers { Read.Ok(on) }
+        coEvery { g.rearDefrosterSupported() } returns Read.Ok(true)
+        coEvery { g.rearDefroster() } answers { Read.Ok(on) }
+        coEvery { g.telltales() } returns Read.Unavailable(VehicleGateway.NO_PERMISSION)
+        coEvery { g.basicWarnings() } returns Read.Ok(BasicWarnings(emptyList(), listOf(BasicWarning.POWER_DOWN)))
+        coEvery { g.evStateOfChargePercent() } returns Read.Ok(78)
+        coEvery { g.fuelPercent() } returns Read.Unsupported
+        coEvery { g.rangeRemainingMeters() } returns Read.Ok(410_000f)
+        coEvery { g.odometerKm() } returns Read.Ok(12_345f)
+        coEvery { g.openDoors() } returns Read.Ok(emptyList())
+        coEvery { g.openWindows() } returns Read.Ok(emptyList())
+        val r = mockk<DrivingRestriction>(relaxed = true)
+        every { r.state } returns MutableStateFlow(Restriction.PARKED_OK)
+        val st = mockk<CheckinStore>(relaxed = true)
+        every { st.loadCheckin() } returns null
+        every { st.loadEvents() } returns emptyList()
+        val c = AppController(CoroutineScope(Dispatchers.Main.immediate), g, r, st)
+        rule.setContent { EasyDriveRoot(c, Tab.PRACTICE) }
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(1500, java.util.concurrent.TimeUnit.MILLISECONDS); rule.waitForIdle()
+        on = true
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(2500, java.util.concurrent.TimeUnit.MILLISECONDS); rule.waitForIdle()
+        val bmp = rule.runOnUiThread<Bitmap> {
+            val v = rule.activity.window.decorView
+            Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888).also { v.draw(Canvas(it)) }
+        }
+        File("build/screens").apply { mkdirs() }.resolve("15_practice_all_done_pleos_panel_1682x1210.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
 
     @Test @Config(qualifiers = "w1682dp-h1210dp-mdpi")
     fun warningsPleosPanel() = shoot("13_warnings_pleos_panel_1682x1210", Tab.WARNINGS, controller(tpmsOn = true, withEvents = true))

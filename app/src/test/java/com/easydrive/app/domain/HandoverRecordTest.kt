@@ -31,8 +31,16 @@ class HandoverRecordTest {
         assertTrue(text.contains("/ 12,458km(+48) /"))
         assertTrue(text.contains("배터리 92%"))
         assertTrue(text.contains("배터리 78%"))
-        assertTrue(text.contains("경고등 없음"))
-        assertTrue(text.contains("대여 중 경고등 없음"))
+        assertTrue(text.contains("앱이 읽은 경고 없음"))
+        assertTrue(text.contains("대여 중 앱이 기록한 경고 없음"))
+    }
+
+    @Test
+    fun `차량이 확인한 조작이 있으면 기록 끝에 이름과 개수를 적는다`() {
+        val none = HandoverRecord.text(checkin(), 12_458f, 78, emptyList(), t0) { it.typeName }
+        assertFalse(none.contains("차량이 확인한 조작"))
+        val some = HandoverRecord.text(checkin(), 12_458f, 78, emptyList(), t0, listOf("전조등 켜기", "앞 와이퍼 AUTO")) { it.typeName }
+        assertTrue(some.endsWith("차량이 확인한 조작 2개: 전조등 켜기, 앞 와이퍼 AUTO"))
     }
 
     @Test
@@ -40,7 +48,7 @@ class HandoverRecordTest {
         val text = HandoverRecord.text(checkin(odo = null, pct = null, readable = false), null, null, emptyList(), t0) { it.typeName }
         assertEquals("주행거리 2곳 모두", 2, Regex("/ 확인 불가 /").findAll(text).count())
         assertTrue(text.contains("배터리 확인 불가"))
-        assertTrue(text.contains("경고등 확인 불가"))
+        assertTrue(text.contains("앱이 읽은 경고 확인 불가"))
         assertFalse(text.contains("(+"))
         assertFalse(text.contains("0km"))
     }
@@ -49,7 +57,7 @@ class HandoverRecordTest {
     fun `대여 중 경고등은 주행 중 여부와 함께 최대 3건까지 적고 나머지는 건수로 줄인다`() {
         val events = (1..7).map { WarningEvent("TPMS", 3, t0 + it * 60_000, whileRestricted = it == 7) }
         val text = HandoverRecord.text(checkin(), 12_500f, 70, events, t0 + 3_600_000) { "타이어 공기압" }
-        assertTrue(text.contains("대여 중 경고등 7건"))
+        assertTrue(text.contains("대여 중 앱이 기록한 경고 7건"))
         assertEquals(3, Regex("타이어 공기압").findAll(text).count())
         assertEquals(1, Regex("\\(주행 중\\)").findAll(text).count())
         assertTrue(text.contains("외 4건"))

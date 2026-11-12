@@ -6,19 +6,15 @@
     <!--
       EasyDrive는 차량 상태를 읽기만 합니다.
       제어(CONTROL_*) 권한과 비공개(PRIVATE_*) 권한은 선언하지 않습니다.
-      공개 읽기 권한은 공식 Vehicle SDK Sample App의 선언을 따랐습니다(설치 시 부여, 런타임 승인 창 없음).
+      Vehicle SDK 2.3.2가 이 앱이 쓰는 조회 API에 표시한 읽기 권한 7개만 선언합니다(설치 시 부여, 런타임 승인 창 없음).
     -->
     <uses-permission android:name="pleos.car.permission.CAR_SAFETY" />
-    <uses-permission android:name="pleos.car.permission.CAR_MILEAGE" />
-    <uses-permission android:name="pleos.car.permission.CAR_POWERTRAIN" />
-    <uses-permission android:name="pleos.car.permission.READ_WINDSHIELD_WIPERS" />
     <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />
     <uses-permission android:name="pleos.car.permission.CAR_WINDOWS" />
     <uses-permission android:name="pleos.car.permission.CAR_CLIMATE" />
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
     <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />
     <uses-permission android:name="pleos.car.permission.CAR_DOORS" />
-    <uses-permission android:name="pleos.car.permission.CAR_INFO" />
 
     <application
         android:name=".EasyDriveApp"

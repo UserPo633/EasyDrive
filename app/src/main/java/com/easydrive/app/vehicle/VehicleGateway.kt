@@ -12,6 +12,7 @@ import ai.pleos.playground.vehicle.constant.control.LightSwitch
 import ai.pleos.playground.vehicle.constant.control.LightState
 import ai.pleos.playground.vehicle.constant.control.OilLevelState
 import ai.pleos.playground.vehicle.constant.control.WiperSwitch
+import ai.pleos.playground.vehicle.constant.control.VehicleGear
 import ai.pleos.playground.vehicle.listener.HvacDefrosterStateListener
 import android.content.Context
 import android.util.Log
@@ -142,20 +143,32 @@ class VehicleGateway(context: Context) {
     // ---------------------------------------------------------------- 경고등
 
     private var telltalesDenied = false
+    private var telltalesWorked = false
+    private var telltalesFails = 0
 
     /**
-     * 계기판 경고등 전체 목록. SDK 2.3.2에서 비공개 권한(PRIVATE_CAR_SAFETY)이 필요한 API라
-     * 일반 앱에는 권한이 없다. 권한이 주어진 환경에서만 동작하며, 거부되면 다시 호출하지 않는다.
+     * 계기판 경고등 전체 목록. SDK 2.3.2에서 조회(getTelltalesInfo)는 CAR_SAFETY 표시이지만
+     * 지원 확인(checkTelltalesCapabilities)은 비공개 권한(PRIVATE_CAR_SAFETY) 표시라서, 지원 확인은 부르지 않고
+     * 조회만 시도한다. 한 번도 읽히지 않은 채 거절·미지원·연속 실패가 나오면 다시 부르지 않는다
+     * (그 뒤로는 공개 경고 상태 7종만 읽는다). 한 번이라도 읽힌 뒤의 실패는 일시적인 것으로 보고 그대로 돌려준다.
      */
     suspend fun telltales(): Read<Telltales> {
         if (telltalesDenied) return Read.Unavailable(NO_PERMISSION)
-        val cap = call<Boolean>("checkTelltalesCapabilities") { ok, fail ->
-            vehicle.getSafety().checkTelltalesCapabilities({ c -> ok(c.canRead()) }, fail)
+        if (!initialized) return Read.Unavailable(NOT_CONNECTED)
+        val r = call<Telltales>("getTelltalesInfo") { ok, fail -> vehicle.getSafety().getTelltalesInfo({ ok(it) }, fail) }
+        if (r is Read.Ok) {
+            if (!telltalesWorked) Log.i(TAG, "telltales readable: ${r.value.telltales.size} items")
+            telltalesWorked = true; telltalesFails = 0
+            return r
         }
-        if (cap is Read.Unavailable && cap.reason == NO_PERMISSION) telltalesDenied = true
-        return guarded(cap) {
-            call("getTelltalesInfo") { ok, fail -> vehicle.getSafety().getTelltalesInfo({ ok(it) }, fail) }
+        if (telltalesWorked) return r
+        val denied = r is Read.Unsupported || (r is Read.Unavailable && r.reason == NO_PERMISSION) || ++telltalesFails >= 2
+        if (denied) {
+            telltalesDenied = true
+            Log.i(TAG, "telltales not available to this app ($r) -> public warning states only")
+            return Read.Unavailable(NO_PERMISSION)
         }
+        return r
     }
 
     // ---------------------------------------------------------------- 공개 경고 상태
@@ -283,7 +296,7 @@ class VehicleGateway(context: Context) {
 
     // ---------------------------------------------------------------- 도어·트렁크·창문
 
-    /** 지원되는 도어 영역별 열림 여부(위치값 > 최솟값이면 열림). */
+    /** 지원되는 도어 영역별 열림 여부(위치값이 0보다 크면 열림). */
     suspend fun openDoors(): Read<List<String>> {
         val areas = call<List<DoorArea>>("checkDoorPositionCapabilities") { ok, fail ->
             vehicle.getDoor().checkDoorPositionCapabilities({ map -> ok(map.keys.toList()) }, fail)
@@ -292,12 +305,17 @@ class VehicleGateway(context: Context) {
         if (areas.value.isEmpty()) return Read.Unsupported
         val open = mutableListOf<String>()
         var readOne = false
+        var missed = 0
         for (area in areas.value) {
             val pos = call<Int>("getCurrentDoorPosition") { ok, fail -> vehicle.getDoor().getCurrentDoorPosition(area, { ok(it) }, fail) }
-            if (pos is Read.Ok) { readOne = true; if (pos.value > 0) open += doorLabel(area) }
+            if (pos is Read.Ok) { readOne = true; if (pos.value > 0) open += doorLabel(area) } else missed++
         }
-        // 지원 목록에 있어도 읽히지 않는 영역이 있을 수 있어, 읽힌 영역만으로 판단한다.
-        return if (readOne) Read.Ok(open) else Read.Unavailable("도어 상태를 읽지 못함")
+        // 열린 곳을 찾았으면 그대로 알린다. 일부가 읽히지 않았는데 열린 곳도 없으면 '모두 닫힘'이라고 하지 않는다.
+        return when {
+            !readOne -> Read.Unavailable("도어 상태를 읽지 못함")
+            missed > 0 && open.isEmpty() -> Read.Unavailable("일부 도어를 읽지 못함")
+            else -> Read.Ok(open)
+        }
     }
 
     suspend fun openWindows(): Read<List<String>> {
@@ -308,11 +326,16 @@ class VehicleGateway(context: Context) {
         if (areas.value.isEmpty()) return Read.Unsupported
         val open = mutableListOf<String>()
         var readOne = false
+        var missed = 0
         for (area in areas.value) {
             val pos = call<Int>("getCurrentWindowPosition") { ok, fail -> vehicle.getWindow().getCurrentWindowPosition(area, { ok(it) }, fail) }
-            if (pos is Read.Ok) { readOne = true; if (pos.value > 0) open += windowLabel(area) }
+            if (pos is Read.Ok) { readOne = true; if (pos.value > 0) open += windowLabel(area) } else missed++
         }
-        return if (readOne) Read.Ok(open) else Read.Unavailable("창문 상태를 읽지 못함")
+        return when {
+            !readOne -> Read.Unavailable("창문 상태를 읽지 못함")
+            missed > 0 && open.isEmpty() -> Read.Unavailable("일부 창문을 읽지 못함")
+            else -> Read.Ok(open)
+        }
     }
 
     // ---------------------------------------------------------------- 실습 과제
@@ -384,6 +407,77 @@ class VehicleGateway(context: Context) {
     suspend fun frontDefroster(): Read<Boolean> =
         call("getHvacDefrosterState") { ok, fail -> vehicle.getHVAC().getHvacDefrosterState(FRONT, { ok(it) }, fail) }
 
+    // ---- 더 익혀 둘 조작(차가 지원할 때만 과제로 낸다)
+
+    suspend fun rearDefrosterSupported(): Read<Boolean> =
+        call("checkHvacDefrosterCapabilities") { ok, fail ->
+            vehicle.getHVAC().checkHvacDefrosterCapabilities(
+                { list: List<WindowArea> -> ok(list.any { it.values.contains(WindowValue.REAR_WINDSHIELD) }) }, fail
+            )
+        }
+
+    suspend fun rearDefroster(): Read<Boolean> =
+        call("getHvacDefrosterState(rear)") { ok, fail -> vehicle.getHVAC().getHvacDefrosterState(REAR_GLASS, { ok(it) }, fail) }
+
+    suspend fun chargePortSupported(): Read<Boolean> =
+        call("checkEvChargePortOpenCapabilities") { ok, fail ->
+            vehicle.getEvBattery().checkEvChargePortOpenCapabilities({ c -> ok(c.canRead()) }, fail)
+        }
+
+    suspend fun chargePortOpen(): Read<Boolean> =
+        call("isEvChargePortOpen") { ok, fail -> vehicle.getEvBattery().isEvChargePortOpen({ ok(it) }, fail) }
+
+    /** 상향등: 스위치에 '켜짐'이 있거나 점등 상태를 읽을 수 있으면 과제로 낸다. */
+    suspend fun highBeamSupported(): Read<Boolean> {
+        val sw = call<List<LightSwitch>>("checkHighBeamLightSwitchCapabilities") { ok, fail ->
+            vehicle.getLight().checkHighBeamLightSwitchCapabilities({ list: List<LightSwitch> -> ok(list) }, fail)
+        }
+        Log.i(TAG, "high beam switch options: $sw")
+        if (sw is Read.Ok && LightSwitch.ON in sw.value) { highBeamBySwitch = true; return Read.Ok(true) }
+        val st = call<List<LightState>>("checkHighBeamLightStateCapabilities") { ok, fail ->
+            vehicle.getLight().checkHighBeamLightStateCapabilities({ c, list -> ok(if (c.canRead()) list else emptyList()) }, fail)
+        }
+        Log.i(TAG, "high beam state options: $st")
+        if (st is Read.Ok && LightState.ON in st.value) { highBeamBySwitch = false; return Read.Ok(true) }
+        return when {
+            sw is Read.Unavailable -> sw
+            st is Read.Unavailable -> st
+            else -> Read.Unsupported
+        }
+    }
+
+    private var highBeamBySwitch = true
+
+    suspend fun highBeamOn(): Read<Boolean> =
+        if (highBeamBySwitch) call<LightSwitch>("getHighBeamLightSwitch") { ok, fail ->
+            vehicle.getLight().getHighBeamLightSwitch({ ok(it) }, fail)
+        }.map { it == LightSwitch.ON }
+        else call<LightState>("getCurrentHighBeamLightState") { ok, fail ->
+            vehicle.getLight().getCurrentHighBeamLightState({ ok(it) }, fail)
+        }.map { it == LightState.ON }
+
+    // 도어 잠금: 운전석 도어(없으면 목록의 첫 도어)의 잠금 상태를 읽는다. 잠그거나 풀지 않는다.
+    private var lockArea: DoorArea? = null
+
+    suspend fun doorLockSupported(): Read<Boolean> =
+        call<List<DoorArea>>("checkDoorLockCapabilities") { ok, fail ->
+            vehicle.getDoor().checkDoorLockCapabilities({ list: List<DoorArea> -> ok(list) }, fail)
+        }.map { list ->
+            lockArea = list.firstOrNull { a -> a.values.any { it.name == "ROW_1_LEFT" } } ?: list.firstOrNull()
+            lockArea != null
+        }
+
+    suspend fun doorLocked(): Read<Boolean> {
+        val area = lockArea ?: return Read.Unsupported
+        return call("getDoorLockState") { ok, fail -> vehicle.getDoor().getDoorLockState(area, { ok(it) }, fail) }
+    }
+
+    /** 기어가 P인지. 실습 과제를 P단에서만 열기 위해 읽는다(주행 규제 잠금은 시스템 신호를 따른다). */
+    suspend fun gearParked(): Read<Boolean> =
+        call<VehicleGear>("getCurrentGearSelectionState") { ok, fail ->
+            vehicle.getGear().getCurrentGearSelectionState({ ok(it) }, fail)
+        }.map { it == VehicleGear.GEAR_PARK }
+
     private var defrosterListener: HvacDefrosterStateListener? = null
 
     /** 성에 제거 상태 변경 알림 구독. 이미 구독 중이면 교체한다. */
@@ -412,6 +506,7 @@ class VehicleGateway(context: Context) {
         const val NO_PERMISSION = "앱에 권한이 없음"
         const val NOT_CONNECTED = "차량 서비스에 연결되지 않음"
         private val FRONT = WindowArea(WindowValue.FRONT_WINDSHIELD)
+        private val REAR_GLASS = WindowArea(WindowValue.REAR_WINDSHIELD)
 
         private fun doorLabel(a: DoorArea): String = a.values.joinToString { v ->
             when (v.name) {

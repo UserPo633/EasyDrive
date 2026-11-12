@@ -4,6 +4,7 @@ import android.app.Application
 import com.easydrive.app.data.CheckinStore
 import com.easydrive.app.domain.AppController
 import com.easydrive.app.vehicle.DrivingRestriction
+import com.easydrive.app.vehicle.NaviGateway
 import com.easydrive.app.vehicle.VehicleGateway
 import android.util.Log
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -26,6 +27,7 @@ class EasyDriveApp : Application() {
             gateway = VehicleGateway(this),
             restriction = DrivingRestriction(this),
             store = CheckinStore(this),
+            navi = NaviGateway(this),
         )
         controller.start()
     }

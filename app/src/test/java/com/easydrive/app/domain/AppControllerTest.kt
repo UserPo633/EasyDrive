@@ -11,6 +11,8 @@ import com.easydrive.app.data.CheckinStore
 import com.easydrive.app.data.WarningEvent
 import com.easydrive.app.vehicle.DrivingRestriction
 import com.easydrive.app.vehicle.LightGoal
+import com.easydrive.app.vehicle.NaviDestination
+import com.easydrive.app.vehicle.NaviSource
 import com.easydrive.app.vehicle.Read
 import com.easydrive.app.vehicle.map
 import com.easydrive.app.vehicle.Restriction
@@ -72,6 +74,13 @@ class AppControllerTest {
         var wiperNow: Read<WiperSwitch> = Read.Ok(WiperSwitch.OFF)
         var defrostSupport: Read<Boolean> = Read.Ok(true)
         var defrostNow: Read<Boolean> = Read.Ok(false)
+        var lightGoal: LightGoal = LightGoal.AUTO
+        var lockSupport: Read<Boolean> = Read.Unsupported
+        var lockNow: Read<Boolean> = Read.Unsupported
+        var chargeSupport: Read<Boolean> = Read.Unsupported
+        var chargeNow: Read<Boolean> = Read.Unsupported
+        var gear: Read<Boolean> = Read.Unsupported
+        var practiced: List<String> = emptyList()
 
         val savedEvents = mutableListOf<List<WarningEvent>>()
         var savedCheckin: CheckinSnapshot? = null
@@ -89,8 +98,17 @@ class AppControllerTest {
             coEvery { gateway.odometerKm() } answers { odometer }
             coEvery { gateway.openDoors() } answers { doors }
             coEvery { gateway.openWindows() } answers { windows }
-            coEvery { gateway.lightGoal() } answers { when (val s = lightSupport) { is Read.Ok -> if (s.value) Read.Ok(LightGoal.AUTO) else Read.Unsupported; Read.Unsupported -> Read.Unsupported; is Read.Unavailable -> s } }
-            coEvery { gateway.lightGoalMet(any()) } answers { lightNow.map { it == LightSwitch.AUTOMATIC } }
+            coEvery { gateway.lightGoal() } answers { when (val s = lightSupport) { is Read.Ok -> if (s.value) Read.Ok(lightGoal) else Read.Unsupported; Read.Unsupported -> Read.Unsupported; is Read.Unavailable -> s } }
+            coEvery { gateway.doorLockSupported() } answers { lockSupport }
+            coEvery { gateway.doorLocked() } answers { lockNow }
+            coEvery { gateway.gearParked() } answers { gear }
+            coEvery { gateway.chargePortSupported() } answers { chargeSupport }
+            coEvery { gateway.chargePortOpen() } answers { chargeNow }
+            coEvery { gateway.highBeamSupported() } returns Read.Unsupported
+            coEvery { gateway.highBeamOn() } returns Read.Unsupported
+            coEvery { gateway.rearDefrosterSupported() } returns Read.Unsupported
+            coEvery { gateway.rearDefroster() } returns Read.Unsupported
+            coEvery { gateway.lightGoalMet(any()) } answers { lightNow.map { if (lightGoal == LightGoal.AUTO) it == LightSwitch.AUTOMATIC else it == LightSwitch.ON } }
             coEvery { gateway.frontWiperSupportsAuto() } answers { wiperSupport }
             coEvery { gateway.frontWiperSwitch() } answers { wiperNow }
             coEvery { gateway.frontDefrosterSupported() } answers { defrostSupport }
@@ -102,6 +120,8 @@ class AppControllerTest {
 
             every { store.loadCheckin() } returns null
             every { store.loadEvents() } returns emptyList()
+            every { store.loadPracticed() } returns emptyList()
+            every { store.savePracticed(any()) } answers { practiced = firstArg() }
             every { store.saveEvents(any()) } answers { savedEvents += firstArg<List<WarningEvent>>() }
             val snap = slot<CheckinSnapshot>()
             every { store.saveCheckin(capture(snap)) } answers { savedCheckin = snap.captured }
@@ -426,6 +446,124 @@ class AppControllerTest {
     private fun PracticeTaskList.byId(id: String) = first { it.id == id }
 
     @Test
+    fun `AUTO가 없는 차에서 전조등 켜기로 완료한 과제는 화면을 다시 열어도 제목이 그대로다`() = runTest {
+        val f = Fake().apply { lightGoal = LightGoal.ON_SWITCH }
+        val c = f.controller(this)
+        c.startPractice(); advanceTimeBy(500)
+        assertEquals("전조등 켜기", c.tasks.value.byId("light").title)
+        f.lightNow = Read.Ok(LightSwitch.ON)
+        advanceTimeBy(1_500)
+        assertEquals(TaskStatus.DONE, c.tasks.value.byId("light").status)
+
+        c.stopPractice(); c.startPractice(); advanceTimeBy(1_500)
+        val light = c.tasks.value.byId("light")
+        assertEquals(TaskStatus.DONE, light.status)
+        assertEquals("전조등 켜기", light.title)
+        assertTrue(light.howTo.contains("켜 보세요"))
+        c.stopPractice()
+    }
+
+    @Test
+    fun `충전구는 열면 완료되고 아직 열려 있음을 알리다가 닫으면 닫힘까지 확인했다고 바뀐다`() = runTest {
+        val f = Fake().apply { chargeSupport = Read.Ok(true); chargeNow = Read.Ok(false) }
+        val c = f.controller(this)
+        c.startPractice(); advanceTimeBy(500)
+        assertEquals(TaskStatus.WAITING, c.tasks.value.byId("charge").status)
+
+        f.chargeNow = Read.Ok(true)
+        advanceTimeBy(1_500)
+        var t = c.tasks.value.byId("charge")
+        assertEquals(TaskStatus.DONE, t.status)
+        assertTrue("열린 채로 두지 않게 눈에 띄게 알림", t.attention)
+        assertTrue(t.detail.contains("닫아"))
+        assertEquals("차량이 확인한 조작은 기록에 남는다", listOf("충전구 열기"), f.practiced)
+
+        f.chargeNow = Read.Ok(false)
+        advanceTimeBy(1_500)
+        t = c.tasks.value.byId("charge")
+        assertEquals(TaskStatus.DONE, t.status)
+        assertFalse(t.attention)
+        assertTrue(t.detail.contains("닫는 것까지"))
+        c.stopPractice()
+    }
+
+    @Test
+    fun `와이퍼 레버가 AUTO가 아닌 위치로 움직이면 완료하지 않고 아직 AUTO가 아니라고 알려 준다`() = runTest {
+        val f = Fake()
+        val c = f.controller(this)
+        c.startPractice(); advanceTimeBy(500)
+
+        f.wiperNow = Read.Ok(WiperSwitch.CONTINUOUS_LEVEL_1)
+        advanceTimeBy(1_500)
+        var t = c.tasks.value.byId("wiper")
+        assertEquals(TaskStatus.WAITING, t.status)
+        assertTrue(t.attention)
+        assertTrue(t.detail.contains("아직 AUTO 위치는 아니에요"))
+
+        f.wiperNow = Read.Ok(WiperSwitch.AUTO)
+        advanceTimeBy(1_500)
+        t = c.tasks.value.byId("wiper")
+        assertEquals(TaskStatus.DONE, t.status)
+        assertFalse(t.attention)
+        c.stopPractice()
+    }
+
+    @Test
+    fun `기어가 P가 아니면 과제를 닫고 그동안의 조작은 완료로 세지 않는다`() = runTest {
+        val f = Fake().apply { gear = Read.Ok(false) }
+        val c = f.controller(this)
+        c.startPractice(); advanceTimeBy(1_500)
+        assertTrue(c.practiceBlocked.value)
+
+        f.defrostNow = Read.Ok(true)
+        advanceTimeBy(1_500)
+        assertEquals("P단이 아닐 때의 조작은 세지 않음", TaskStatus.WAITING, c.tasks.value.byId("defrost").status)
+
+        f.gear = Read.Ok(true)
+        advanceTimeBy(1_500)
+        assertFalse(c.practiceBlocked.value)
+        assertEquals(TaskStatus.DONE, c.tasks.value.byId("defrost").status)
+        c.stopPractice()
+    }
+
+    @Test
+    fun `주행 뒤 P단으로 돌아와 실습을 다시 열면 닫힘 안내가 남아 있지 않다`() = runTest {
+        val f = Fake().apply { gear = Read.Ok(false) }
+        val c = f.controller(this)
+        c.startPractice(); advanceTimeBy(1_500)
+        assertTrue(c.practiceBlocked.value)
+        c.stopPractice()            // 주행 잠금으로 실습 화면이 닫힘
+
+        f.gear = Read.Ok(true)      // 주차
+        c.startPractice()
+        assertFalse("기어를 다시 읽기 전에도 닫힘 안내를 보이지 않는다", c.practiceBlocked.value)
+        advanceTimeBy(1_500)
+        assertFalse(c.practiceBlocked.value)
+        c.stopPractice()
+    }
+
+    @Test
+    fun `기어를 읽지 못하는 차에서는 과제를 닫지 않는다`() = runTest {
+        val f = Fake().apply { gear = Read.Unavailable("응답 없음") }
+        val c = f.controller(this)
+        c.startPractice(); advanceTimeBy(1_500)
+        assertFalse(c.practiceBlocked.value)
+        c.stopPractice()
+    }
+
+    @Test
+    fun `도어 잠금을 읽을 수 있는 차에서는 잠금 버튼 과제가 나오고 잠그면 완료된다`() = runTest {
+        val f = Fake().apply { lockSupport = Read.Ok(true); lockNow = Read.Ok(false) }
+        val c = f.controller(this)
+        c.startPractice(); advanceTimeBy(500)
+        assertEquals(TaskStatus.WAITING, c.tasks.value.byId("doorlock").status)
+        f.lockNow = Read.Ok(true)
+        advanceTimeBy(1_500)
+        assertEquals(TaskStatus.DONE, c.tasks.value.byId("doorlock").status)
+        c.stopPractice()
+    }
+
+    @Test
     fun `지원되는 과제는 대기 중이다가 차량 값이 바뀌면 완료로 바뀐다`() = runTest {
         val f = Fake()
         val c = f.controller(this)
@@ -444,7 +582,7 @@ class AppControllerTest {
         f.wiperNow = Read.Ok(WiperSwitch.AUTO)
         f.defrostNow = Read.Ok(true)
         advanceTimeBy(1_500)
-        assertTrue(c.tasks.value.all { it.status == TaskStatus.DONE })
+        assertTrue(c.tasks.value.filter { !it.extra }.all { it.status == TaskStatus.DONE })
         c.stopPractice()
     }
 
@@ -465,6 +603,43 @@ class AppControllerTest {
         advanceTimeBy(1_500)
         assertEquals(TaskStatus.DONE, c.tasks.value.byId("light").status)
         c.stopPractice()
+    }
+
+    @Test
+    fun `차가 지원하는 추가 과제만 내고 충전구가 열리면 완료한다`() = runTest {
+        val f = Fake()
+        var open = false
+        coEvery { f.gateway.chargePortSupported() } returns Read.Ok(true)
+        coEvery { f.gateway.chargePortOpen() } answers { Read.Ok(open) }
+        val c = f.controller(this)
+        c.startPractice()
+        advanceTimeBy(1_500)
+        assertEquals(TaskStatus.WAITING, c.tasks.value.byId("charge").status)
+        // 상향등·뒷유리 열선은 이 차가 지원하지 않는다고 답했으므로 과제로 내지 않는다.
+        assertEquals(TaskStatus.UNSUPPORTED, c.tasks.value.byId("highbeam").status)
+        assertEquals(TaskStatus.UNSUPPORTED, c.tasks.value.byId("reardefrost").status)
+        assertTrue(c.tasks.value.filter { it.extra }.size == 4 && c.tasks.value.filter { !it.extra }.size == 3)
+
+        open = true
+        advanceTimeBy(1_500)
+        assertEquals(TaskStatus.DONE, c.tasks.value.byId("charge").status)
+        c.stopPractice()
+    }
+
+    @Test
+    fun `내비게이션이 길 안내 중이면 목적지까지 남은 거리를 리포트에 담는다`() = runTest {
+        val f = Fake()
+        val c = AppController(backgroundScope, f.gateway, f.restriction, f.store, navi = NaviSource { Read.Ok(NaviDestination("강릉역", 132_000)) })
+        c.refreshReport(); advanceTimeBy(100)
+        assertEquals(Read.Ok(NaviDestination("강릉역", 132_000)).value, (c.report.value.destination as Read.Ok).value)
+    }
+
+    @Test
+    fun `내비게이션을 쓸 수 없으면 목적지 없이 리포트를 만든다`() = runTest {
+        val f = Fake()
+        val c = f.controller(this)
+        c.refreshReport(); advanceTimeBy(100)
+        assertEquals(Read.Unsupported, c.report.value.destination)
     }
 
     @Test

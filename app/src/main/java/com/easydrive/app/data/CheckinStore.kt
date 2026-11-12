@@ -82,13 +82,24 @@ class CheckinStore(context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    /** 차량이 확인해 준 실습 조작의 이름(인수·반납 기록에 함께 남긴다). */
+    fun savePracticed(titles: List<String>) {
+        prefs.edit().putString(KEY_PRACTICED, org.json.JSONArray(titles).toString()).apply()
+    }
+
+    fun loadPracticed(): List<String> {
+        val raw = prefs.getString(KEY_PRACTICED, null) ?: return emptyList()
+        return runCatching { org.json.JSONArray(raw).let { a -> (0 until a.length()).map { a.getString(it) } } }.getOrDefault(emptyList())
+    }
+
     /** 반납 완료 후 다음 대여를 위해 기록을 지운다. */
     fun clearRental() {
-        prefs.edit().remove(KEY_CHECKIN).remove(KEY_EVENTS).apply()
+        prefs.edit().remove(KEY_CHECKIN).remove(KEY_EVENTS).remove(KEY_PRACTICED).apply()
     }
 
     private companion object {
         const val KEY_CHECKIN = "checkin"
         const val KEY_EVENTS = "events"
+        const val KEY_PRACTICED = "practiced"
     }
 }

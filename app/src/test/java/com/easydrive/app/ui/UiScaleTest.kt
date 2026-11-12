@@ -3,6 +3,10 @@ package com.easydrive.app.ui
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import com.easydrive.app.domain.PracticeTask
+import com.easydrive.app.domain.TaskStatus
+import com.easydrive.app.vehicle.NaviDestination
+import com.easydrive.app.vehicle.Read
 import org.junit.Test
 
 /** 화면 크기별 배율과 배치: 넓은 차량 화면에서는 키우고, 작은 화면에서는 줄이지 않으며, 좁은 창에서는 세로로 쌓는다. */
@@ -67,5 +71,56 @@ class UiScaleTest {
     @Test fun `Pleos 오른쪽 패널 크기에서는 배율을 조금 낮춰 가로 배치를 유지한다`() {
         assertEquals(1682 / 1100f, uiScale(1682, 1210), 0.001f)
         assertTrue(!isNarrow(1682, 1210))
+    }
+
+    // --- 내비 목적지 표시
+    @Test fun `목적지가 주행가능거리 안쪽이면 남은 거리만 적는다`() {
+        assertEquals("강릉역까지 132km", destinationNote(Read.Ok(NaviDestination("강릉역", 132_000)), Read.Ok(410f)))
+    }
+
+    @Test fun `목적지가 주행가능거리의 80퍼센트를 넘으면 충전 계획을 확인하라고 알린다`() {
+        assertEquals("강릉역까지 350km · 주행가능거리와 비슷해요. 충전 계획을 확인하세요", destinationNote(Read.Ok(NaviDestination("강릉역", 350_000)), Read.Ok(410f)))
+        assertEquals("목적지까지 500km · 주행가능거리보다 멀어요. 충전 계획을 확인하세요", destinationNote(Read.Ok(NaviDestination(null, 500_000)), Read.Ok(410f)))
+    }
+
+    @Test fun `길 안내 중이 아니거나 읽지 못하면 아무것도 적지 않는다`() {
+        assertEquals(null, destinationNote(Read.Unsupported, Read.Ok(410f)))
+        assertEquals(null, destinationNote(Read.Unavailable("응답 없음"), Read.Ok(410f)))
+        assertEquals("강릉역까지 132km", destinationNote(Read.Ok(NaviDestination("강릉역", 132_000)), Read.Unavailable("확인 불가")))
+    }
+
+    @Test
+    fun `이미 설정돼 있던 과제는 직접 확인한 수에 넣지 않고 따로 센다`() {
+        fun t(id: String, st: TaskStatus) = PracticeTask(id, id, "", status = st)
+        val s = practiceSummary(listOf(t("a", TaskStatus.DONE), t("b", TaskStatus.ALREADY_SET), t("c", TaskStatus.UNSUPPORTED)))
+        assertEquals("2개 중 1개 직접 확인 · 1개는 이미 설정됨 · 1개는 앱이 확인 못 함", s.text)
+        assertTrue("조작할 것이 남지 않았으면 끝난 것으로 본다", s.allSettled)
+
+        val waiting = practiceSummary(listOf(t("a", TaskStatus.DONE), t("b", TaskStatus.WAITING), t("c", TaskStatus.WAITING)))
+        assertEquals("3개 중 1개 직접 확인", waiting.text)
+        assertFalse(waiting.allSettled)
+    }
+
+    @Test
+    fun `글자는 낱말 안에서 줄이 바뀌지 않게 하고 숫자와 단위는 붙여 둔다`() {
+        val wj = '\u2060'
+        assertEquals("앞${wj}유${wj}리 성${wj}에 제${wj}거", keepWords("앞유리 성에 제거"))
+        assertEquals("띄어쓰기는 그대로 줄바꿈 자리로 남는다", 2, keepWords("앞유리 성에 제거").count { it == ' ' })
+        assertEquals("숫자와 단위는 줄바꿈 없는 공백으로 잇는다", "지금 12,419\u00A0km", keepWords("지금 12,419 km").replace(wj.toString(), ""))
+        val long = "가".repeat(MAX_KEEP_WORD + 1)
+        assertEquals("아주 긴 낱말은 넘치지 않게 그대로 둔다", long, keepWords(long))
+    }
+
+    @Test
+    fun `과제를 마친 뒤에는 출발해도 된다고 하지 않고 열려 있는 것부터 되돌리게 한다`() {
+        fun t(id: String, title: String, st: TaskStatus, attention: Boolean = false) = PracticeTask(id, title, "", status = st, attention = attention)
+        val open = afterPracticeNote(listOf(t("light", "전조등 켜기", TaskStatus.DONE), t("charge", "충전구 열기", TaskStatus.DONE, true), t("highbeam", "상향등 켜기", TaskStatus.DONE, true)))
+        assertEquals("충전구·상향등을 되돌린 뒤 출발하세요", open.first)
+        assertTrue(open.second)
+
+        val closed = afterPracticeNote(listOf(t("light", "전조등 켜기", TaskStatus.DONE), t("charge", "충전구 열기", TaskStatus.DONE)))
+        assertFalse(closed.second)
+        assertTrue(closed.first.contains("문·안전벨트·계기판은 출발 전에 직접 확인하세요"))
+        assertFalse(closed.first.contains("출발 준비 완료"))
     }
 }

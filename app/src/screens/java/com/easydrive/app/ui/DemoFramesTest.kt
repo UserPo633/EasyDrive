@@ -87,6 +87,15 @@ open class DemoFramesTest {
             coEvery { g.openDoors() } returns Read.Ok(emptyList())
             coEvery { g.openWindows() } answers { windows }
             coEvery { g.lightGoal() } answers { when (val s = lightSupport) { is Read.Ok -> if (s.value) Read.Ok(LightGoal.AUTO) else Read.Unsupported; Read.Unsupported -> Read.Unsupported; is Read.Unavailable -> s } }
+            coEvery { g.chargePortSupported() } returns Read.Ok(true)
+            coEvery { g.doorLockSupported() } returns Read.Ok(true)
+            coEvery { g.doorLocked() } returns Read.Ok(false)
+            coEvery { g.gearParked() } returns Read.Ok(true)
+            coEvery { g.chargePortOpen() } returns Read.Ok(false)
+            coEvery { g.highBeamSupported() } returns Read.Ok(true)
+            coEvery { g.highBeamOn() } returns Read.Ok(false)
+            coEvery { g.rearDefrosterSupported() } returns Read.Ok(true)
+            coEvery { g.rearDefroster() } returns Read.Ok(false)
             coEvery { g.lightGoalMet(any()) } answers { light.map { it == LightSwitch.AUTOMATIC } }
             coEvery { g.frontWiperSupportsAuto() } returns Read.Ok(true)
             coEvery { g.frontWiperSwitch() } answers { wiper }
@@ -192,7 +201,7 @@ open class DemoFramesTest {
         rule.setContent { EasyDriveRoot(c, Tab.RETURN) }
         c.refreshReport(); idle()
         // 화면 맨 아래(QR 카드와 기록 지우기 버튼)까지 스크롤한 상태를 찍는다.
-        rule.onNodeWithText("반납 완료 · 기록 지우기").performScrollTo()
+        rule.onNodeWithText(keepWords("반납 완료 · 기록 지우기")).performScrollTo()
         capture(name)
     }
 }

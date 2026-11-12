@@ -22,9 +22,9 @@ object HandoverRecord {
     /**
      * QR 칸이 너무 촘촘해지지 않도록 짧게 쓴다(보통 200바이트 안팎).
      * 예) EasyDrive 기록
-     *     인수 11-11 21:29 / 12,410km / 배터리 92% / 경고등 없음
+     *     인수 11-11 21:29 / 12,410km / 배터리 92% / 앱이 읽은 경고 없음
      *     지금 11-11 22:29 / 12,458km(+48) / 배터리 78%
-     *     대여 중 경고등 1건: 22:19 타이어 공기압(주행 중)
+     *     대여 중 앱이 기록한 경고 1건: 22:19 출력 제한(주행 중)
      */
     fun text(
         checkin: CheckinSnapshot,
@@ -32,6 +32,7 @@ object HandoverRecord {
         nowEnergyPercent: Int?,
         events: List<WarningEvent>,
         nowMillis: Long,
+        practiced: List<String> = emptyList(),
         eventName: (WarningEvent) -> String,
     ): String {
         val day = SimpleDateFormat("MM-dd HH:mm", Locale.KOREA)
@@ -44,7 +45,7 @@ object HandoverRecord {
         sb.append("인수 ").append(day.format(Date(checkin.savedAtMillis)))
             .append(" / ").append(km(checkin.odometerKm))
             .append(" / ").append(energy).append(' ').append(pct(checkin.energyPercent))
-            .append(" / 경고등 ").append(
+            .append(" / 앱이 읽은 경고 ").append(
                 when {
                     !checkin.warningsReadable -> NA
                     checkin.warnings.isEmpty() -> "없음"
@@ -56,7 +57,7 @@ object HandoverRecord {
             sb.append("(+%,d)".format((nowOdometerKm - checkin.odometerKm).toInt()))
         }
         sb.append(" / ").append(energy).append(' ').append(pct(nowEnergyPercent)).append('\n')
-        sb.append("대여 중 경고등 ")
+        sb.append("대여 중 앱이 기록한 경고 ")
         if (events.isEmpty()) sb.append("없음")
         else {
             sb.append(events.size).append("건: ")
@@ -66,6 +67,8 @@ object HandoverRecord {
             })
             if (events.size > MAX_EVENTS) sb.append(" 외 ").append(events.size - MAX_EVENTS).append("건")
         }
+        // 운전자가 직접 조작했고 차량이 확인해 준 것만 적는다('이미 설정됨'은 넣지 않는다).
+        if (practiced.isNotEmpty()) sb.append('\n').append("차량이 확인한 조작 ").append(practiced.size).append("개: ").append(practiced.joinToString(", "))
         return sb.toString()
     }
 

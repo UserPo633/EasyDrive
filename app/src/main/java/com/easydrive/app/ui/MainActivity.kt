@@ -48,7 +48,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -79,6 +78,7 @@ import com.easydrive.app.domain.PracticeTask
 import com.easydrive.app.domain.Severity
 import com.easydrive.app.domain.TaskStatus
 import com.easydrive.app.domain.TelltaleGuide
+import com.easydrive.app.vehicle.NaviDestination
 import com.easydrive.app.vehicle.Read
 import com.easydrive.app.vehicle.Restriction
 import java.text.SimpleDateFormat
@@ -230,6 +230,39 @@ internal fun EasyDriveRoot(c: AppController, startTab: Tab = Tab.CHECKIN, insets
     }
 }
 
+/**
+ * 한글은 기본 줄바꿈 규칙에서 낱말 중간('성/에 제거')에서도 줄이 바뀐다. 낱말 안의 글자 사이에
+ * 줄바꿈 금지 문자(U+2060)를 넣어 띄어쓰기에서만 줄이 바뀌게 하고, 숫자와 단위 사이 공백은 줄바꿈 없는 공백으로 바꾼다.
+ * 아주 긴 낱말은 좁은 카드에서 넘치지 않게 그대로 둔다.
+ */
+internal fun keepWords(text: String): String {
+    if (text.length < 2) return text
+    val sb = StringBuilder(text.length * 2)
+    for ((i, word) in text.replace(Regex("(\\d) (km|%)"), "$1\u00A0$2").split(' ').withIndex()) {
+        if (i > 0) sb.append(' ')
+        if (word.length > MAX_KEEP_WORD) sb.append(word) else word.forEachIndexed { k, ch -> if (k > 0) sb.append('\u2060'); sb.append(ch) }
+    }
+    return sb.toString()
+}
+internal const val MAX_KEEP_WORD = 18
+
+/** 이 파일의 모든 글자는 이 함수를 거쳐 그린다(낱말 단위 줄바꿈 적용). */
+@Composable
+private fun Text(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
+    fontWeight: FontWeight? = null,
+    lineHeight: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    softWrap: Boolean = true,
+    overflow: androidx.compose.ui.text.style.TextOverflow = androidx.compose.ui.text.style.TextOverflow.Clip,
+) = androidx.compose.material3.Text(
+    text = keepWords(text), modifier = modifier, color = color, fontSize = fontSize, fontWeight = fontWeight,
+    lineHeight = lineHeight, maxLines = maxLines, softWrap = softWrap, overflow = overflow,
+)
+
 /** 화면 설계 기준(dp): 가로 1280 × 세로 720. 이보다 큰 화면에서는 같은 비율로 키운다. */
 internal const val DESIGN_HEIGHT_DP = 720f
 /** 키운 뒤에도 이 폭은 남도록 배율을 제한한다(창을 반으로 나눠 쓰는 경우). */
@@ -357,7 +390,7 @@ private fun LockedScreen(r: Restriction) {
             color = TextMain, fontSize = 30.sp, fontWeight = FontWeight.Bold,
         )
         Spacer(Modifier.height(12.dp))
-        Text("경고는 계기판을 따르세요. 이 화면은 주차 후 다시 열립니다.", color = Muted, fontSize = 24.sp)
+        Text("경고는 계기판을 따르세요. 주행이 끝나면 이 화면이 다시 열립니다.", color = Muted, fontSize = 24.sp)
     }
 }
 
@@ -463,7 +496,11 @@ private fun CheckinTab(c: AppController, onOpen: (Tab) -> Unit) {
         Cells(
             { m -> StatusItem(m, "차량 경고", warningsSummary(r.warnings, r.warningScope, r.warningItems), onClick = if (hasWarnings) ({ onOpen(Tab.WARNINGS) }) else null) },
             { m -> StatusItem(m, r.energyLabel ?: "배터리·연료", r.energyPercent.fmt { "$it%" }) },
-            { m -> StatusItem(m, "주행가능거리", r.rangeKm.fmt { "${it.toInt()} km" }) },
+            { m ->
+                val shown = r.rangeKm.fmt { "${it.toInt()} km" }
+                val note = destinationNote(r.destination, r.rangeKm)
+                StatusItem(m, "주행가능거리", if (note != null) shown.copy(note = note, strongNote = true) else shown)
+            },
         )
         Spacer(Modifier.height(16.dp))
         Cells(
@@ -489,6 +526,9 @@ private fun CheckinTab(c: AppController, onOpen: (Tab) -> Unit) {
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
                     Text("인수 기록 저장됨 · ${dayTime(s.savedAtMillis)}", color = TextMain, fontSize = 20.sp)
+                    // 오래된 기록은 앞 이용자의 것일 수 있다.
+                    val days = ((System.currentTimeMillis() - s.savedAtMillis) / 86_400_000L).toInt()
+                    if (days >= 3) Text("${days}일 전 기록이에요. 내 기록이 아니면 지우고 새로 저장하세요.", color = Warn, fontSize = 18.sp)
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedButton(onClick = { askOverwrite = true }, modifier = Modifier.heightIn(min = 60.dp)) { Text("지금 값으로 다시 저장", fontSize = 19.sp) }
@@ -510,6 +550,23 @@ private fun CheckinTab(c: AppController, onOpen: (Tab) -> Unit) {
 
 private data class Shown(val text: String, val tone: Color, val note: String? = null, val strongNote: Boolean = false)
 
+/**
+ * 내비게이션이 길 안내 중이면 목적지까지 남은 거리를 주행가능거리와 나란히 적는다.
+ * 남은 거리가 주행가능거리의 80%를 넘으면 충전 계획을 확인하라고만 알린다(도착 가능 여부를 단정하지 않는다).
+ */
+internal fun destinationNote(dest: Read<NaviDestination>, rangeKm: Read<Float>): String? {
+    val d = (dest as? Read.Ok)?.value ?: return null
+    val km = d.remainMeters / 1000
+    if (km <= 0) return null
+    val head = "${d.name ?: "목적지"}까지 ${km}km"
+    val range = (rangeKm as? Read.Ok)?.value ?: return head
+    return when {
+        km > range -> "$head · 주행가능거리보다 멀어요. 충전 계획을 확인하세요"
+        km > range * 0.8f -> "$head · 주행가능거리와 비슷해요. 충전 계획을 확인하세요"
+        else -> head
+    }
+}
+
 private fun <T> Read<T>.fmt(f: (T) -> String): Shown = when (this) {
     is Read.Ok -> Shown(f(value), TextMain)
     Read.Unsupported -> Shown("― 지원 안 함", Muted)
@@ -527,6 +584,11 @@ private fun warningsSummary(r: Read<List<ActiveWarning>>, scope: WarningScope, i
             else -> "읽은 경고 ${items.size}종 기준"
         }
         when {
+            // 읽은 경고가 한두 종뿐이면 '경고 없음'이 차 전체가 정상이라는 뜻으로 읽힌다. 무엇이 꺼져 있는지만 중립색으로 말한다.
+            need.isEmpty() && scope == WarningScope.BASIC && items.size == 1 ->
+                Shown("${items[0]}: 꺼짐", TextMain, "앱이 읽는 경고는 이 1종뿐이에요. 계기판 경고등과 타이어는 직접 확인하세요", strongNote = true)
+            need.isEmpty() && scope == WarningScope.BASIC && items.size == 2 ->
+                Shown("켜진 경고 없음", TextMain, "$basis · 계기판 경고등과 타이어는 직접 확인", strongNote = true)
             need.isEmpty() -> Shown("경고 없음", Ok, "$basis · 계기판 경고등과 타이어는 직접 확인", strongNote = true)
             need.any { it.explain.severity == Severity.STOP } -> Shown("▲ 확인 필요 ${need.size}개", Stop, need.joinToString { it.explain.name } + " · 풀이 보기 ›")
             else -> Shown("▲ 확인 필요 ${need.size}개", Warn, need.joinToString { it.explain.name } + " · 풀이 보기 ›")
@@ -563,19 +625,68 @@ private fun PracticeTab(c: AppController) {
         c.startPractice()
         onDispose { c.stopPractice() }
     }
+    val blocked by c.practiceBlocked.collectAsStateWithLifecycle()
     Column(Modifier.verticalScroll(rememberScrollState())) {
-        val confirmed = tasks.count { it.status == TaskStatus.DONE || it.status == TaskStatus.ALREADY_SET }
+        val core = tasks.filter { !it.extra }
+        // 더 익혀 둘 조작은 이 차가 확인해 줄 수 있는 것만 보여 준다.
+        val extras = tasks.filter { it.extra && it.status in setOf(TaskStatus.WAITING, TaskStatus.ALREADY_SET, TaskStatus.DONE) }
         Title("출발 전 3가지만 손으로 익혀요", "실제 레버·버튼을 조작하면 차량이 확인해 줍니다. 차량이 확인한 것만 완료로 표시해요.")
-        // 이 차에 없는 기능은 세지 않는다(끝낼 수 없는 과제가 분모에 남지 않게).
-        val missing = tasks.count { it.status == TaskStatus.UNSUPPORTED }
-        val total = tasks.size - missing
-        Text(
-            "${total}개 중 ${confirmed}개 확인됨" + if (missing > 0) " · ${missing}개는 이 차에 없음" else "",
-            color = if (total > 0 && confirmed == total) Ok else TextMain, fontSize = 22.sp, fontWeight = FontWeight.Bold,
-        )
+        if (blocked) {
+            // 기어가 P가 아니면 조작을 시키지 않는다.
+            Card(Modifier.fillMaxWidth()) {
+                Column {
+                    Text("기어를 P에 두면 과제가 열려요", color = TextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text("실습은 주차 상태(P단)에서만 합니다. 지금까지 확인한 과제는 그대로 남아 있어요.", color = Muted, fontSize = 21.sp)
+                }
+            }
+            return@Column
+        }
+        val s = practiceSummary(core)
+        Text(s.text, color = if (s.allSettled) Ok else TextMain, fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
-        Cells(*tasks.map<PracticeTask, @Composable (Modifier) -> Unit> { t -> { m -> TaskCard(m, t) } }.toTypedArray())
+        Cells(*core.map<PracticeTask, @Composable (Modifier) -> Unit> { t -> { m -> TaskCard(m, t) } }.toTypedArray())
+        if (s.allSettled) {
+            Spacer(Modifier.height(14.dp))
+            val (text, warn) = afterPracticeNote(tasks)
+            Text(text, color = if (warn) Warn else TextMain, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+        }
+        if (extras.isNotEmpty()) {
+            Spacer(Modifier.height(22.dp))
+            val e = practiceSummary(extras)
+            Text("이 차에서 더 익혀 둘 조작 · ${e.text}", color = Muted, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
+            Cells(*extras.map<PracticeTask, @Composable (Modifier) -> Unit> { t -> { m -> TaskCard(m, t) } }.toTypedArray())
+        }
     }
+}
+
+/**
+ * 기본 과제를 마친 뒤의 한 줄. 과제를 마쳤다는 것이 '출발해도 된다'는 뜻으로 읽히지 않게,
+ * 열거나 켠 채인 것이 있으면 그것부터 되돌리라고 하고(주황), 없으면 앱이 보지 않는 것을 직접 확인하라고 한다.
+ */
+internal fun afterPracticeNote(tasks: List<PracticeTask>): Pair<String, Boolean> {
+    val leftOn = tasks.filter { it.status == TaskStatus.DONE && it.attention }.map { it.title.substringBefore(' ') }
+    val confirmed = tasks.count { it.status == TaskStatus.DONE }
+    return if (leftOn.isNotEmpty()) "${leftOn.joinToString("·")}을 되돌린 뒤 출발하세요" to true
+    else "기본 3가지 확인을 마쳤어요(차량이 확인한 조작 ${confirmed}개 기록). 문·안전벨트·계기판은 출발 전에 직접 확인하세요" to false
+}
+
+internal class PracticeSummary(val text: String, val allSettled: Boolean)
+
+/**
+ * 과제 묶음의 진행 문구. 운전자가 조작해서 차량이 확인한 것(완료)과, 조작 없이 이미 맞춰져 있던 것(이미 설정됨)을
+ * 따로 센다. 이 차에 없는 기능은 분모에서 뺀다(끝낼 수 없는 과제가 남지 않게).
+ */
+internal fun practiceSummary(tasks: List<PracticeTask>): PracticeSummary {
+    val missing = tasks.count { it.status == TaskStatus.UNSUPPORTED }
+    val total = tasks.size - missing
+    val done = tasks.count { it.status == TaskStatus.DONE }
+    val already = tasks.count { it.status == TaskStatus.ALREADY_SET }
+    val text = "${total}개 중 ${done}개 직접 확인" +
+        (if (already > 0) " · ${already}개는 이미 설정됨" else "") +
+        (if (missing > 0) " · ${missing}개는 앱이 확인 못 함" else "")
+    return PracticeSummary(text, total > 0 && done + already == total)
 }
 
 @Composable
@@ -583,7 +694,7 @@ private fun TaskCard(modifier: Modifier, t: PracticeTask) {
     val (badge, tone) = when (t.status) {
         TaskStatus.CHECKING -> "확인 중" to Muted
         TaskStatus.WAITING -> "해 보세요" to TextMain
-        TaskStatus.ALREADY_SET -> "이미 설정됨" to Ok
+        TaskStatus.ALREADY_SET -> "이미 설정됨 · 위치만 확인" to Muted
         TaskStatus.DONE -> "완료" to Ok
         TaskStatus.UNSUPPORTED -> "― 지원 안 함" to Muted
         TaskStatus.UNAVAILABLE -> "― 확인 불가" to Muted
@@ -591,27 +702,33 @@ private fun TaskCard(modifier: Modifier, t: PracticeTask) {
     // 상태에 맞는 안내만 보여 준다(이미 설정됐거나 없는 기능인데 '돌려 보세요'라고 하지 않는다).
     val body = when (t.status) {
         TaskStatus.ALREADY_SET -> t.alreadyText.ifEmpty { t.howTo }
-        TaskStatus.UNSUPPORTED -> "이 차에는 없는 기능이에요."
+        // 차에 그 기능이 없다는 뜻이 아니라, 앱이 이 차에서 그 상태를 읽지 못한다는 뜻이다.
+        TaskStatus.UNSUPPORTED -> "앱이 이 차에서 확인할 수 없는 조작이에요. 위치는 직접 찾아 두세요."
+        // 완료한 과제는 '해 보세요' 안내를 지우고 확인 결과만 보여 준다(카드가 짧아져 아래 과제가 가려지지 않는다).
+        TaskStatus.DONE -> ""
         else -> t.howTo
     }
     val foot = when (t.status) {
         TaskStatus.ALREADY_SET, TaskStatus.UNSUPPORTED -> ""
         TaskStatus.UNAVAILABLE -> "차량에서 상태를 읽지 못해 완료를 확인할 수 없어요."
+        // 추가 과제는 칸이 좁아, 기본 과제에 이미 적힌 '조작하면 자동으로 완료' 안내를 되풀이하지 않는다.
+        TaskStatus.WAITING -> if (t.extra && !t.attention) "" else t.detail
         else -> t.detail
     }
-    Card(modifier.heightIn(min = if (LocalNarrow.current) 120.dp else 280.dp)) {
+    Card(modifier.heightIn(min = if (LocalNarrow.current) 120.dp else if (t.extra) 170.dp else 230.dp)) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (t.status == TaskStatus.DONE || t.status == TaskStatus.ALREADY_SET) {
+                // 체크 표시는 운전자가 조작해서 차량이 확인한 과제에만 붙인다.
+                if (t.status == TaskStatus.DONE) {
                     Icon(Icons.Filled.CheckCircle, null, tint = Ok, modifier = Modifier.size(32.dp)); Spacer(Modifier.width(8.dp))
                 }
                 Text(badge, color = tone, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(12.dp))
             Text(t.title, color = TextMain, fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            Text(body, color = TextMain.copy(alpha = 0.9f), fontSize = 21.sp)
-            if (foot.isNotEmpty()) { Spacer(Modifier.height(10.dp)); Text(foot, color = Muted, fontSize = 18.sp) }
+            if (body.isNotEmpty()) { Spacer(Modifier.height(10.dp)); Text(body, color = TextMain.copy(alpha = 0.9f), fontSize = 21.sp) }
+            val done = t.status == TaskStatus.DONE
+            if (foot.isNotEmpty()) { Spacer(Modifier.height(10.dp)); Text(foot, color = if (t.attention) Warn else if (done) TextMain.copy(alpha = 0.9f) else Muted, fontSize = if (t.attention || done) 20.sp else 18.sp, fontWeight = if (t.attention) FontWeight.Medium else FontWeight.Normal) }
         }
     }
 }
@@ -639,7 +756,7 @@ private fun WarningsTab(c: AppController) {
                 EventCard(e, when (still) { true -> "지금도 켜져 있음"; false -> "지금은 꺼져 있음"; null -> null })
                 Spacer(Modifier.height(12.dp))
             }
-            OutlinedButton(onClick = { c.acknowledgeEvents() }, modifier = Modifier.heightIn(min = 76.dp)) { Text("읽었어요 (기록은 남아요)", fontSize = 21.sp) }
+            OutlinedButton(onClick = { c.acknowledgeEvents() }, modifier = Modifier.heightIn(min = 76.dp)) { Text("확인했어요", fontSize = 21.sp) }
             Spacer(Modifier.height(22.dp))
         }
         val pendingTypes = pending.map { it.typeName }.toSet()
@@ -655,7 +772,7 @@ private fun WarningsTab(c: AppController) {
                         color = Ok, fontSize = 22.sp,
                     )
                     rest.isEmpty() -> Text(
-                        if (r.warningScope == WarningScope.BASIC) "앱이 읽는 경고 ${r.warningItems.size}종 중 더 켜진 것은 없어요. 계기판 경고등은 따로 확인하세요."
+                        if (r.warningScope == WarningScope.BASIC) "위 경고 말고 켜진 것은 없어요(앱이 읽는 ${r.warningItems.size}종 기준). 계기판 경고등은 따로 확인하세요."
                         else "위에 보여 드린 경고 말고는 없어요.",
                         color = Muted, fontSize = 21.sp,
                     )
@@ -724,7 +841,7 @@ private fun ReturnTab(c: AppController) {
             },
             { m ->
                 CompareItem(m, s.energyLabel ?: "배터리·연료", s.energyPercent?.let { "$it%" }, (r.energyPercent as? Read.Ok)?.value?.let { "$it%" },
-                    diffI(s.energyPercent, (r.energyPercent as? Read.Ok)?.value)?.let { d -> when { d < 0 -> "${-d}%p 줄었어요"; d > 0 -> "$d%p 늘었어요"; else -> "변화 없음" } })
+                    diffI(s.energyPercent, (r.energyPercent as? Read.Ok)?.value)?.let { d -> when { d < 0 -> "${-d}% 줄었어요"; d > 0 -> "$d% 늘었어요"; else -> "변화 없음" } })
             },
         )
         Spacer(Modifier.height(16.dp))
@@ -732,7 +849,7 @@ private fun ReturnTab(c: AppController) {
             Column {
                 Text("대여 중 새로 켜진 경고 (앱이 실행 중이던 동안)", color = Muted, fontSize = 20.sp)
                 Spacer(Modifier.height(8.dp))
-                if (events.isEmpty()) Text("기록된 경고가 없어요.", color = Ok, fontSize = 22.sp)
+                if (events.isEmpty()) Text("앱이 떠 있던 동안 새로 켜진 경고는 기록되지 않았어요. 계기판 경고등은 앱이 읽지 못해요.", color = TextMain.copy(alpha = 0.9f), fontSize = 21.sp)
                 events.forEach { e ->
                     Text("· ${time(e.atMillis)}  ${TelltaleGuide.explainByName(e.typeName, e.colorId).name}${if (e.whileRestricted) " (주행 중)" else ""}", color = TextMain, fontSize = 21.sp)
                 }
@@ -741,7 +858,8 @@ private fun ReturnTab(c: AppController) {
             }
         }
         Spacer(Modifier.height(16.dp))
-        val recordText = remember(s, r.readAtMillis, events) {
+        val practiced by c.practiced.collectAsStateWithLifecycle()
+        val recordText = remember(s, r.readAtMillis, events, practiced) {
             HandoverRecord.text(
                 checkin = s,
                 nowOdometerKm = r.odometerKm.valueOrNullF(),
@@ -749,6 +867,7 @@ private fun ReturnTab(c: AppController) {
                 events = events,
                 nowMillis = if (r.readAtMillis > 0) r.readAtMillis else System.currentTimeMillis(),
                 eventName = { e -> TelltaleGuide.explainByName(e.typeName, e.colorId).name },
+                practiced = practiced,
             )
         }
         Card(Modifier.fillMaxWidth()) {
@@ -785,7 +904,8 @@ private fun CompareItem(modifier: Modifier, label: String, before: String?, now:
         Column {
             Text(label, color = Muted, fontSize = 20.sp)
             Spacer(Modifier.height(10.dp))
-            Text("인수 ${before ?: "확인 불가"}  →  지금 ${now ?: "확인 불가"}", color = TextMain, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            // '인수 12,345 km'와 '지금 12,419 km'가 각각 한 덩어리로 줄바꿈되게 줄바꿈 없는 공백으로 잇는다.
+            Text("인수\u00A0${before ?: "확인 불가"}  →  지금\u00A0${now ?: "확인 불가"}", color = TextMain, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(delta ?: "비교할 수 없어요", color = if (delta != null) TextMain else Muted, fontSize = 22.sp)
         }
